@@ -15,6 +15,60 @@ MILESTONES = {
     1000: "👑 レジェンド"
 }
 
+class CheerView(discord.ui.View):
+    def __init__(self, target_member):
+        super().__init__(timeout=None) # メッセージが消えるまで有効
+        self.target_member = target_member
+        self.supporters = set() # 重複防止用のセット
+
+    @discord.ui.button(label="🔥 応援！", style=discord.ButtonStyle.green, custom_id="cheer_button")
+    async def cheer(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # 自分自身への応援はブロック
+        if interaction.user.id == self.target_member.id:
+            await interaction.response.send_message("自分自身は応援できません（気持ちは分かります！）", ephemeral=True)
+            return
+
+        # すでに応援済みかチェック
+        if interaction.user.id in self.supporters:
+            await interaction.response.send_message("すでに応援済みです！", ephemeral=True)
+            return
+
+        # 応援者リストに追加
+        self.supporters.add(interaction.user.id)
+        
+        # Embedを更新する処理
+        embed = interaction.message.embeds[0]
+        
+        # 応援者の名前リストを生成
+        supporter_names = []
+        for user_id in self.supporters:
+            member = interaction.guild.get_member(user_id)
+            if member:
+                supporter_names.append(member.display_name)
+            else:
+                supporter_names.append("Unknown")
+            
+        text = "、".join(supporter_names)
+        field_name = "📣 応援してくれた人"
+        field_value = f"{text} さんが応援しています！"
+
+        # 既存の「応援」フィールドがあれば更新、なければ追加
+        found = False
+        for i, field in enumerate(embed.fields):
+            if field.name == field_name:
+                embed.set_field_at(i, name=field_name, value=field_value, inline=False)
+                found = True
+                break
+        
+        if not found:
+            embed.add_field(name=field_name, value=field_value, inline=False)
+
+        # メッセージを更新
+        await interaction.response.edit_message(embed=embed)
+        
+        # 押した人への確認メッセージ（自分にしか見えない）
+        await interaction.followup.send(f"{self.target_member.display_name}さんにエールを送りました！🔥", ephemeral=True)
+
 class StudyCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -99,7 +153,8 @@ class StudyCog(commands.Cog):
             )
             embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
             
-            join_msg = await text_channel.send(embed=embed)
+            view = CheerView(member)
+            join_msg = await text_channel.send(embed=embed, view=view)
             # DB更新: join_msg_idを設定、leave_msg_idは削除(None)
             await self.bot.db.set_message_state(member.id, join_msg.id, None)
 
