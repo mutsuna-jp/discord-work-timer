@@ -70,6 +70,12 @@ class WorkTimerBot(commands.Bot):
                 self.tree.copy_global_to(guild=guild)
                 synced = await self.tree.sync(guild=guild)
                 print(f'Synced {len(synced)} command(s) to guild {guild_id}.')
+                
+                # 重複回避のため、グローバルコマンドを削除する
+                # これにより、開発環境で予測変換が2重に出るのを防ぎます
+                self.tree.clear_commands(guild=None)
+                await self.tree.sync()
+                print('Cleared global commands to prevent duplicates.')
             else:
                 synced = await self.tree.sync()
                 print(f'Synced {len(synced)} command(s) globally.')
