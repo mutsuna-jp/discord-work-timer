@@ -1,0 +1,74 @@
+import os
+import asyncio
+import discord
+import edge_tts
+
+VOICE_NAME = "ja-JP-NanamiNeural"
+FFMPEG_CLEANUP_DELAY = 1
+
+def format_duration(total_seconds, for_voice=False):
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    
+    if for_voice:
+        if hours > 0:
+            return f"{hours}時間{minutes}分"
+        else:
+            return f"{minutes}分"
+    else:
+        return f"{hours}時間 {minutes}分 {seconds}秒"
+
+async def generate_voice(text, output_path):
+    communicate = edge_tts.Communicate(text, VOICE_NAME)
+    await communicate.save(output_path)
+
+async def speak_in_vc(voice_channel, text, member_id):
+    """音声チャネルに入ってテキストを読み上げる"""
+    filename = f"voice_{member_id}.mp3"
+    try:
+        vc = voice_channel.guild.voice_client
+        if not vc:
+            vc = await voice_channel.connect()
+        
+        await generate_voice(text, filename)
+        
+        source = discord.FFmpegPCMAudio(filename)
+        if not vc.is_playing():
+            vc.play(source)
+            while vc.is_playing():
+                await asyncio.sleep(FFMPEG_CLEANUP_DELAY)
+            await vc.disconnect()
+            
+    except Exception as e:
+        print(f"音声読み上げエラー: {e}")
+        try:
+            if voice_channel.guild.voice_client:
+                await voice_channel.guild.voice_client.disconnect()
+        except Exception as disconnect_error:
+            print(f"VC切断エラー: {disconnect_error}")
+    finally:
+        if os.path.exists(filename):
+            try:
+                os.remove(filename)
+            except Exception as e:
+                print(f"ファイル削除エラー: {e}")
+
+async def safe_message_delete(message):
+    """権限がない場合もスキップするメッセージ削除"""
+    if message.guild:
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
+async def delete_previous_message(channel, message_id):
+    """チャネルの前のメッセージを削除"""
+    if message_id:
+        try:
+            msg = await channel.fetch_message(message_id)
+            await msg.delete()
+        except discord.NotFound:
+            pass 
+        except Exception as e:
+            print(f"メッセージ削除エラー: {e}")
