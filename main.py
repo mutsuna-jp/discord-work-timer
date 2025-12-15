@@ -3,13 +3,13 @@ from discord.ext import commands, tasks
 import os
 import sqlite3
 from datetime import datetime, timedelta, time
+import asyncio
+import edge_tts 
 
-# 環境変数から設定を読み込む
+# 環境変数
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', 0))
 SUMMARY_CHANNEL_ID = int(os.getenv('SUMMARY_CHANNEL_ID', 0))
-
-# 詳細ログを何日分残すか（これより古い詳細ログは削除され、集計データだけが残ります）
 KEEP_LOG_DAYS = 30 
 
 # インテント設定
@@ -22,18 +22,17 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 voice_state_log = {}
 DB_PATH = "/data/study_log.db"
 
+# 使用する声の設定 (例: 日本語・女性・七海Neural)
+# 他の候補: "ja-JP-KeitaNeural" (男性) など
+VOICE_NAME = "ja-JP-NanamiNeural"
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # 詳細ログ用（今まで通り）
     c.execute('''CREATE TABLE IF NOT EXISTS study_logs
                  (user_id INTEGER, username TEXT, start_time TEXT, duration_seconds INTEGER, created_at TEXT)''')
-    
-    # 【追加】長期保存用の日次集計テーブル
-    # date: YYYY-MM-DD 形式
     c.execute('''CREATE TABLE IF NOT EXISTS daily_summary
                  (user_id INTEGER, username TEXT, date TEXT, total_seconds INTEGER, PRIMARY KEY(user_id, date))''')
-    
     conn.commit()
     conn.close()
 
@@ -41,14 +40,9 @@ def get_today_seconds(user_id):
     now = datetime.now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_str = today_start.isoformat()
-
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('''
-        SELECT SUM(duration_seconds)
-        FROM study_logs
-        WHERE user_id = ? AND created_at >= ?
-    ''', (user_id, today_str))
+    c.execute('''SELECT SUM(duration_seconds) FROM study_logs WHERE user_id = ? AND created_at >= ?''', (user_id, today_str))
     result = c.fetchone()[0]
     conn.close()
     return result if result else 0
@@ -56,8 +50,41 @@ def get_today_seconds(user_id):
 def format_duration(total_seconds):
     hours = total_seconds // 3600
     minutes = (total_seconds % 3600) // 60
-    seconds = total_seconds % 60
-    return f"{hours}時間 {minutes}分 {seconds}秒"
+    # 読み上げ用に短く
+    if hours > 0:
+        return f"{hours}時間{minutes}分"
+    else:
+        return f"{minutes}分"
+
+# ▼▼▼ 音声生成部分を edge-tts に変更 ▼▼▼
+async def generate_voice(text, output_path='voice.mp3'):
+    communicate = edge_tts.Communicate(text, VOICE_NAME)
+    await communicate.save(output_path)
+
+# VCで喋らせる関数
+async def speak_in_vc(voice_channel, text):
+    try:
+        vc = voice_channel.guild.voice_client
+        if not vc:
+            vc = await voice_channel.connect()
+        
+        # 音声生成 (非同期)
+        await generate_voice(text)
+        
+        # 再生 (MP3を再生)
+        source = discord.FFmpegPCMAudio("voice.mp3")
+        if not vc.is_playing():
+            vc.play(source)
+            
+            while vc.is_playing():
+                await asyncio.sleep(1)
+            
+            await vc.disconnect()
+            
+    except Exception as e:
+        print(f"音声読み上げエラー: {e}")
+        if voice_channel.guild.voice_client:
+             await voice_channel.guild.voice_client.disconnect()
 
 @bot.event
 async def on_ready():
@@ -71,15 +98,26 @@ async def on_voice_state_update(member, before, after):
     if member.bot:
         return
 
-    channel = bot.get_channel(LOG_CHANNEL_ID)
+    text_channel = bot.get_channel(LOG_CHANNEL_ID)
 
+    # 1. 入室検知
     if before.channel is None and after.channel is not None:
         voice_state_log[member.id] = datetime.now()
         today_sec = get_today_seconds(member.id)
-        time_str = format_duration(today_sec)
-        if channel:
-            await channel.send(f"👋 こんにちは **{member.display_name}** さん！\n今日の積み上げ: **{time_str}** からスタートです🔥")
+        
+        # テキスト通知
+        time_str_text = f"{today_sec // 3600}時間 {(today_sec % 3600) // 60}分 {(today_sec % 60)}秒"
+        if text_channel:
+            await text_channel.send(f"👋 こんにちは **{member.display_name}** さん！\n今日の積み上げ: **{time_str_text}** からスタートです🔥")
 
+        # 音声読み上げ
+        time_str_speak = format_duration(today_sec)
+        # より自然な会話文に
+        speak_text = f"こんにちは、{member.display_name}さん。今日の積み上げは、{time_str_speak}です。一緒に頑張りましょう。"
+        
+        asyncio.create_task(speak_in_vc(after.channel, speak_text))
+
+    # 2. 退室検知
     elif before.channel is not None and after.channel is None:
         if member.id in voice_state_log:
             join_time = voice_state_log[member.id]
@@ -94,15 +132,15 @@ async def on_voice_state_update(member, before, after):
             conn.commit()
             conn.close()
 
-            current_str = format_duration(total_seconds)
+            current_str = f"{total_seconds // 3600}時間 {(total_seconds % 3600) // 60}分 {total_seconds % 60}秒"
             today_sec = get_today_seconds(member.id)
-            total_str = format_duration(today_sec)
+            total_str = f"{today_sec // 3600}時間 {(today_sec % 3600) // 60}分 {today_sec % 60}秒"
             
-            if channel:
+            if text_channel:
                 msg = (f"🍵 お疲れ様でした！ **{member.display_name}** さん\n"
                        f"今回の作業時間: **{current_str}**\n"
                        f"今日の総作業時間: **{total_str}**")
-                await channel.send(msg)
+                await text_channel.send(msg)
             
             del voice_state_log[member.id]
 
@@ -132,33 +170,23 @@ async def rank(ctx):
 
     msg = "🏆 **今週の作業時間ランキング** 🏆\n(集計期間: 月曜日〜現在)\n\n"
     for i, (username, total_seconds) in enumerate(rows, 1):
-        time_str = format_duration(total_seconds)
+        time_str = f"{total_seconds // 3600}時間 {(total_seconds % 3600) // 60}分"
         icon = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
         msg += f"{icon} **{username}**: {time_str}\n"
 
     await ctx.send(msg)
 
-# ▼▼▼ 毎日23:59に実行：日報送信 ＆ データ整理 ▼▼▼
 @tasks.loop(time=time(hour=23, minute=59))
 async def daily_report_task():
-    # 1. 日報送信機能
     channel = bot.get_channel(SUMMARY_CHANNEL_ID)
     now = datetime.now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_str = today_start.isoformat()
-    today_date_str = now.strftime('%Y-%m-%d') # YYYY-MM-DD形式
+    today_date_str = now.strftime('%Y-%m-%d')
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
-    # 今日の集計を取得
-    c.execute('''
-        SELECT user_id, username, SUM(duration_seconds) as total_time
-        FROM study_logs
-        WHERE created_at >= ?
-        GROUP BY user_id
-        ORDER BY total_time DESC
-    ''', (today_str,))
+    c.execute('''SELECT user_id, username, SUM(duration_seconds) as total_time FROM study_logs WHERE created_at >= ? GROUP BY user_id ORDER BY total_time DESC''', (today_str,))
     rows = c.fetchall()
 
     if channel and rows:
@@ -169,31 +197,15 @@ async def daily_report_task():
             msg += f"• **{username}**: {hours}時間 {minutes}分\n"
         await channel.send(msg)
     
-    # 2. データの圧縮・保存処理（統計機能用）
-    print("日次データの保存とクリーンアップを開始します...")
-    
-    # 今日の集計結果を daily_summary テーブルに保存（上書き保存）
     for user_id, username, total_seconds in rows:
-        c.execute('''
-            INSERT OR REPLACE INTO daily_summary (user_id, username, date, total_seconds)
-            VALUES (?, ?, ?, ?)
-        ''', (user_id, username, today_date_str, total_seconds))
+        c.execute('''INSERT OR REPLACE INTO daily_summary (user_id, username, date, total_seconds) VALUES (?, ?, ?, ?)''', (user_id, username, today_date_str, total_seconds))
     
-    # 3. 古い詳細ログの削除
-    # KEEP_LOG_DAYS 日以上前のデータを削除
     cleanup_threshold = now - timedelta(days=KEEP_LOG_DAYS)
-    cleanup_threshold_str = cleanup_threshold.isoformat()
-    
-    c.execute("DELETE FROM study_logs WHERE created_at < ?", (cleanup_threshold_str,))
-    deleted_count = c.rowcount
+    c.execute("DELETE FROM study_logs WHERE created_at < ?", (cleanup_threshold.isoformat(),))
+    if c.rowcount > 0:
+        c.execute("VACUUM")
     
     conn.commit()
-    
-    # データベースのファイルサイズを最適化（削除した分の容量をOSに返す）
-    if deleted_count > 0:
-        c.execute("VACUUM")
-        print(f"{deleted_count} 件の古いログを削除し、データベースを最適化しました。")
-    
     conn.close()
 
 bot.run(TOKEN)
