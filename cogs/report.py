@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 from datetime import datetime, timedelta, time, timezone
 import os
+import asyncio
 from utils import format_duration, delete_previous_message, safe_message_delete, create_embed_from_config
 from messages import MESSAGES
 
@@ -21,11 +22,23 @@ class ReportCog(commands.Cog):
         self.pending_vc_clears = set()
         
         # タスクを開始
-        self.daily_report_task.change_interval(time=time(hour=self.daily_report_hour, minute=self.daily_report_minute, tzinfo=JST))
+        # 日報: 翌朝 7:00
+        self.daily_report_task.change_interval(time=time(hour=7, minute=0, tzinfo=JST))
         self.daily_report_task.start()
+
+        # バックアップ: 設定時刻 (23:59)
+        self.backup_task.change_interval(time=time(hour=self.daily_report_hour, minute=self.daily_report_minute, tzinfo=JST))
+        self.backup_task.start()
+
+        # 警告: バックアップ5分前 (23:54)
+        warn_time = time(hour=self.daily_report_hour, minute=max(0, self.daily_report_minute - 5), tzinfo=JST)
+        self.warning_task.change_interval(time=warn_time)
+        self.warning_task.start()
 
     def cog_unload(self):
         self.daily_report_task.cancel()
+        self.backup_task.cancel()
+        self.warning_task.cancel()
 
     @app_commands.command(name="rank", description="週間ランキングを表示します")
     async def rank(self, interaction: discord.Interaction):
@@ -115,12 +128,15 @@ class ReportCog(commands.Cog):
         # Ephemeral (自分だけに見える) メッセージとして送信
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="daily_report", description="[管理者用] 日報とバックアップを手動実行します")
+    @app_commands.command(name="daily_report", description="[管理者用] 日報を手動送信します")
     @app_commands.describe(days_offset="何日前のデータとして実行するか (例: 1 = 昨日)")
     @app_commands.default_permissions(administrator=True)
-    async def manual_daily_report(self, interaction: discord.Interaction, days_offset: int = 0):
-        """手動で日報・バックアップを実行"""
-        # BACKUP_CHANNEL_ID でのみ実行可能にする
+    async def manual_daily_report(self, interaction: discord.Interaction, days_offset: int = 1):
+        """手動で日報を実行"""
+        # BACKUP_CHANNEL_ID ではなく SUMMARY_CHANNEL で実行許可すべきかもしれないが、
+        # 管理者コマンドなので BACKUP_CHANNEL_ID チェックを維持、または管理者のみに制限
+        
+        # 既存ロジックを踏襲してチャンネルチェックを行う
         backup_channel_id = getattr(self.bot, 'BACKUP_CHANNEL_ID', 0)
         if backup_channel_id and interaction.channel_id != backup_channel_id:
             await interaction.response.send_message(
@@ -135,37 +151,113 @@ class ReportCog(commands.Cog):
         if days_offset > 0:
             target_date = target_date - timedelta(days=days_offset)
             
-        await self.execute_daily_report(target_date)
-        await interaction.followup.send(f"日報とバックアップの実行が完了しました (対象: {target_date.strftime('%Y/%m/%d')})")
+        await self.send_daily_report(target_date)
+        await interaction.followup.send(f"日報の送信が完了しました (対象: {target_date.strftime('%Y/%m/%d')})")
+
+    @app_commands.command(name="backup", description="[管理者用] バックアップとクリーンアップを手動実行します")
+    @app_commands.default_permissions(administrator=True)
+    async def manual_backup(self, interaction: discord.Interaction):
+        """手動でバックアップを実行"""
+        backup_channel_id = getattr(self.bot, 'BACKUP_CHANNEL_ID', 0)
+        if backup_channel_id and interaction.channel_id != backup_channel_id:
+            await interaction.response.send_message(
+                f"このコマンドはバックアップチャンネル <#{backup_channel_id}> でのみ実行可能です。",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer()
+        await self.perform_backup(datetime.now())
+        await interaction.followup.send("バックアップとクリーンアップが完了しました。")
+
+    @tasks.loop(time=time(hour=7, minute=0, tzinfo=JST))
+    async def daily_report_task(self):
+        """毎朝7時に前日の日報を送信"""
+        # 前日の日付を取得してレポート
+        yesterday = datetime.now() - timedelta(days=1)
+        await self.send_daily_report(yesterday)
+
+    @tasks.loop(time=time(hour=23, minute=54, tzinfo=JST))
+    async def warning_task(self):
+        """23:54にVC参加ユーザーへ通知"""
+        for guild in self.bot.guilds:
+            for vc in guild.voice_channels:
+                for member in vc.members:
+                    if not member.bot:
+                        try:
+                            embed = discord.Embed(
+                                title="⚠️ 自動切断のお知らせ",
+                                description="5分後 (23:59) に日次メンテナンスのため自動的にボイスチャットから切断されます。\n作業時間は自動的に記録されます。",
+                                color=0xFFFF00
+                            )
+                            await member.send(embed=embed)
+                        except Exception as e:
+                            print(f"DM送信失敗 ({member.display_name}): {e}")
 
     @tasks.loop(time=time(hour=23, minute=59, tzinfo=JST))
-    async def daily_report_task(self):
-        """毎日日報を送信し、ログをクリーンアップ"""
-        await self.execute_daily_report(datetime.now())
+    async def backup_task(self):
+        """毎日バックアップを実行し、ログをクリーンアップ"""
+        # --- 強制切断ロジック ---
+        print("日次メンテナンス: ユーザー強制切断を開始...")
+        disconnected_count = 0
+        for guild in self.bot.guilds:
+            for vc in guild.voice_channels:
+                for member in vc.members:
+                    if not member.bot:
+                        try:
+                            await member.move_to(None)
+                            disconnected_count += 1
+                        except Exception as e:
+                            print(f"強制切断エラー ({member.display_name}): {e}")
+        
+        if disconnected_count > 0:
+            print(f"{disconnected_count}名のユーザーを切断しました。ログ保存のため10秒待機します...")
+            await asyncio.sleep(10)
+        # ----------------------
 
-    async def execute_daily_report(self, now: datetime):
+        await self.perform_backup(datetime.now())
+
+    async def send_daily_report(self, target_date: datetime):
+        """日報Embedを作成して送信"""
         summary_channel_id = getattr(self.bot, 'SUMMARY_CHANNEL_ID', 0)
         channel = self.bot.get_channel(summary_channel_id)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_str = today_start.isoformat()
-        today_date_str = now.strftime('%Y-%m-%d')
-        today_disp_str = now.strftime('%Y/%m/%d')
+        
+        # 指定日の00:00:00
+        start_of_day = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        start_str = start_of_day.isoformat()
+        
+        # 次の日の00:00:00 (範囲指定のため)
+        # ただし元のロジックが created_at >= ? なので、その日以降すべてを含む形になっている。
+        # 論理的には "その日1日分" を出すべきだが、既存ロジックを踏襲するなら "start_of_day以降"
+        # レポートは「前日分」として出すが、実行時点(朝7時)で「昨日0時以降」のデータを集計すると、
+        # 「昨日0時から今(朝7時)まで」が含まれてしまう可能性がある。
+        # しかし study_logs は作業終了時に記録されるはず。深夜作業中のものはまだログになっていない場合が多いか、
+        # あるいは終了した部分だけログになっている。
+        # 既存ロジックは "WHERE created_at >= ?" なので、report実行時点までの全てを集計していた。
+        # 今回、実行タイミングがズレるので、範囲を限定したほうが正確だが、
+        # 簡易的に "翌日7時" に "前日0時以降" を集計すると、深夜0時~7時の分も入ってしまう。
+        # ユーザーの意図としては「前日の日報」なので、本来は range (yesterday 00:00 <= t < today 00:00) が正しい。
+        # 修正案: executeクエリを範囲指定にする。
+        
+        end_of_day = start_of_day + timedelta(days=1)
+        end_str = end_of_day.isoformat()
 
-        # DB Execute expects str usually for safe comparison
         rows = await self.bot.db.execute(
             '''SELECT user_id, username, SUM(duration_seconds) as total_time 
                FROM study_logs 
-               WHERE created_at >= ? 
+               WHERE created_at >= ? AND created_at < ?
                GROUP BY user_id 
                ORDER BY total_time DESC''',
-            (today_str,),
+            (start_str, end_str),
             fetch_all=True
         )
+
+        today_disp_str = target_date.strftime('%Y/%m/%d')
 
         if channel:
             if not rows:
                 msg = MESSAGES.get("report", {}).get("empty_message", "本日の作業はありませんでした。")
-                await channel.send(msg)
+                await channel.send(f"**[{today_disp_str}]** {msg}")
             else:
                 report_config = MESSAGES.get("report", {})
                 embed = create_embed_from_config(
@@ -182,14 +274,32 @@ class ReportCog(commands.Cog):
                 
                 embed.add_field(name="Results", value=report_text, inline=False)
                 await channel.send(embed=embed)
+
+    async def perform_backup(self, now: datetime):
+        """バックアップとメンテナンス実行"""
+        # 集計対象は「今日」 (実行は23:59想定なので、今日00:00〜現在までとし、実質今日全域)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_str = today_start.isoformat()
+        today_date_str = now.strftime('%Y-%m-%d')
+        today_disp_str = now.strftime('%Y/%m/%d')
+
+        # 集計 (保存用)
+        # こちらも念のため範囲指定をしておくが、23:59実行なら >= today_start でほぼ問題ない
+        rows = await self.bot.db.execute(
+            '''SELECT user_id, username, SUM(duration_seconds) as total_time 
+               FROM study_logs 
+               WHERE created_at >= ? 
+               GROUP BY user_id 
+               ORDER BY total_time DESC''',
+            (today_str,),
+            fetch_all=True
+        )
         
         # データベースに日報を保存 & クリーンアップ
         logs_deleted = 0
         summary_deleted = 0
         db_size_mb = 0
         
-        # Custom DB logic for batch operation
-        # Custom DB logic for batch operation
         if rows:
             for user_id, username, total_seconds in rows:
                 await self.bot.db.execute(
