@@ -109,11 +109,12 @@ def is_active(voice_state):
     return voice_state.channel is not None and not voice_state.self_deaf
 
 async def set_personal_timer(message, minutes):
+    # メッセージ削除 (権限がないと失敗するのでtryで囲む)
     if message.guild:
         try:
             await message.delete()
-        except:
-            pass
+        except Exception:
+            pass # 権限がない場合は無視
 
     if minutes <= 0:
         await message.author.send(MESSAGES["timer"]["invalid"])
@@ -336,19 +337,24 @@ async def rank(ctx):
     embed.add_field(name="Top Members", value=rank_text, inline=False)
     await ctx.send(embed=embed)
 
-# ▼▼▼ 追加: !stats (通算記録) ▼▼▼
+# ▼▼▼ 修正: DM送信＆チャット削除 ▼▼▼
 @bot.command()
 async def stats(ctx):
+    # コマンドを削除（権限があれば）
+    if ctx.guild:
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
+
     user_id = ctx.author.id
     
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        # 通算合計時間
         c.execute('''SELECT SUM(duration_seconds) FROM study_logs WHERE user_id = ?''', (user_id,))
         result = c.fetchone()[0]
         total_seconds = result if result else 0
         
-        # 最初の記録日
         c.execute('''SELECT MIN(created_at) FROM study_logs WHERE user_id = ?''', (user_id,))
         first_date_str = c.fetchone()[0]
 
@@ -379,11 +385,18 @@ async def stats(ctx):
         inline=False
     )
     
-    await ctx.send(embed=embed)
+    # DMに送信
+    await ctx.author.send(embed=embed)
 
-# ▼▼▼ 追加: !help (コマンド一覧) ▼▼▼
+# ▼▼▼ 修正: DM送信＆チャット削除 ▼▼▼
 @bot.command()
 async def help(ctx):
+    if ctx.guild:
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
+
     embed = discord.Embed(
         title=MESSAGES["help"]["embed_title"],
         description=MESSAGES["help"]["embed_desc"],
@@ -393,7 +406,8 @@ async def help(ctx):
     for cmd_name, cmd_desc in MESSAGES["help"]["commands"]:
         embed.add_field(name=cmd_name, value=cmd_desc, inline=False)
     
-    await ctx.send(embed=embed)
+    # DMに送信
+    await ctx.author.send(embed=embed)
 
 @bot.command()
 async def add(ctx, member: discord.Member, minutes: int):
