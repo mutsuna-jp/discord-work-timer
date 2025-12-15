@@ -113,7 +113,7 @@ async def on_voice_state_update(member, before, after):
         # 音声読み上げ
         time_str_speak = format_duration(today_sec)
         # より自然な会話文に
-        speak_text = f"こんにちは、{member.display_name}さん。今日の積み上げは、{time_str_speak}です。一緒に頑張りましょう。"
+        speak_text = f"{member.display_name}さんが入室しました。現在{time_str_speak}です。"
         
         asyncio.create_task(speak_in_vc(after.channel, speak_text))
 
