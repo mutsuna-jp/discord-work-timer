@@ -59,5 +59,33 @@ class AdminCog(commands.Cog):
         action = "追加" if minutes > 0 else "削除"
         await interaction.followup.send(f"✅ **{member.display_name}** さんの時間を {abs(minutes)}分 {action}しました。\n今日の合計: **{time_str}**")
 
+    @app_commands.command(name="clear_log", description="[管理者用] ログチャンネルのメッセージを全て削除します")
+    @app_commands.default_permissions(administrator=True)
+    async def clear_log(self, interaction: discord.Interaction):
+        """ログチャンネルのクリーンアップ"""
+        # BACKUP_CHANNEL_ID でのみ実行可能にする
+        backup_channel_id = getattr(self.bot, 'BACKUP_CHANNEL_ID', 0)
+        if backup_channel_id and interaction.channel_id != backup_channel_id:
+            await interaction.response.send_message(
+                f"このコマンドはバックアップチャンネル <#{backup_channel_id}> でのみ実行可能です。",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        
+        log_channel_id = getattr(self.bot, 'LOG_CHANNEL_ID', 0)
+        log_channel = self.bot.get_channel(log_channel_id)
+        
+        if not log_channel:
+            await interaction.followup.send("エラー: ログチャンネルが見つかりません。", ephemeral=True)
+            return
+
+        try:
+            deleted = await log_channel.purge(limit=None)
+            await interaction.followup.send(f"ログチャンネル <#{log_channel_id}> のメッセージを全て削除しました。({len(deleted)}件)", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"削除中にエラーが発生しました: {e}", ephemeral=True)
+
 async def setup(bot):
     await bot.add_cog(AdminCog(bot))
