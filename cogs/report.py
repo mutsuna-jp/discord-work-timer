@@ -335,6 +335,16 @@ class ReportCog(commands.Cog):
         # VCチャットのクリーンアップ
         await self.cleanup_vc_chats()
 
+        # ログチャンネルのクリーンアップ
+        log_channel_id = getattr(self.bot, 'LOG_CHANNEL_ID', 0)
+        log_channel = self.bot.get_channel(log_channel_id)
+        if log_channel:
+            try:
+                await log_channel.purge(limit=None)
+                print(f"ログチャンネル {log_channel.name} をクリーンアップしました。")
+            except Exception as e:
+                print(f"ログチャンネル削除エラー: {e}")
+
     async def send_database_backup(self, today_date_str, today_disp_str, logs_deleted=0, summary_deleted=0, db_size_mb=0):
         """データベースのバックアップをチャネルに送信"""
         backup_channel_id = getattr(self.bot, 'BACKUP_CHANNEL_ID', 0)

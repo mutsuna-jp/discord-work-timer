@@ -86,7 +86,7 @@ class WorkTimerBot(commands.Bot):
         print(f'ログインしました: {self.user}')
         
         # 1. ステータスの変更（「作業時間を記録中」と表示され、稼働中か一目でわかります）
-        await self.change_presence(activity=discord.Game(name="作業時間を記録中 ⏳"))
+        await self.change_presence(activity=discord.Game(name="作業時間を記録中"))
 
         # 2. 起動完了通知
         channel = self.get_channel(self.LOG_CHANNEL_ID)
@@ -100,9 +100,19 @@ class WorkTimerBot(commands.Bot):
 
     async def close(self):
         """Bot停止時に実行される処理"""
+        print("Botの停止処理を開始します...")
         try:
             # 終了通知
-            channel = self.get_channel(self.LOG_CHANNEL_ID)
+            channel_id = self.LOG_CHANNEL_ID
+            channel = self.get_channel(channel_id)
+            
+            # キャッシュにない場合はAPIから取得を試みる
+            if not channel and channel_id:
+                try:
+                    channel = await self.fetch_channel(channel_id)
+                except Exception as e:
+                    print(f"チャンネル情報取得エラー (ID: {channel_id}): {e}")
+
             if channel:
                 embed = discord.Embed(
                     title="⚠️ システム再起動",
@@ -110,8 +120,12 @@ class WorkTimerBot(commands.Bot):
                     color=0xFF0000 # 赤色
                 )
                 await channel.send(embed=embed)
+                print("終了通知を送信しました。")
+            else:
+                print(f"通知先のチャンネルが見つかりません (ID: {channel_id})")
+                
         except Exception as e:
-            print(f"終了通知エラー: {e}")
+            print(f"終了通知送信エラー: {e}")
         
         # 本来の終了処理を実行
         await super().close()
