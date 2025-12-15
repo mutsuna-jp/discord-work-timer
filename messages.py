@@ -9,8 +9,8 @@ MESSAGES = {
         "embed_title": "🚀 作業スタート！",
         "embed_color": 0x00FF00, # 緑色
         # フィールド名と値
-        "field_name": "今日の積み上げ",
-        "field_value": "**{current_total}** から開始"
+        "field_name": "本日の作業時間",
+        "field_value": "**{current_total}** "
     },
 
     # ---------------------------
@@ -20,7 +20,9 @@ MESSAGES = {
         "embed_title": "🍵 お疲れ様でした",
         "embed_color": 0x00BFFF, # 水色
         "field1_name": "今回の作業時間",
-        "field2_name": "今日の総作業時間",
+        "field1_value": "**{time}**",
+        "field2_name": "本日の総作業時間",
+        "field2_value": "**{total}**",
     },
 
     # ---------------------------
@@ -29,7 +31,6 @@ MESSAGES = {
     "rank": {
         "empty": "今週はまだ誰も作業していません...！一番乗りを目指しましょう！🏃‍♂️",
         "embed_title": "🏆 今週の作業時間ランキング",
-        "embed_desc": "集計期間: 月曜日 〜 現在",
         "embed_color": 0xFFD700, # 金色
         "row": "{icon} **{name}**: {time}\n"
     },
