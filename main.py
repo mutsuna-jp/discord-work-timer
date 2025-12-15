@@ -12,8 +12,16 @@ TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', 0))
 SUMMARY_CHANNEL_ID = int(os.getenv('SUMMARY_CHANNEL_ID', 0))
 BACKUP_CHANNEL_ID = int(os.getenv('BACKUP_CHANNEL_ID', 0))
+
+# 定数
 KEEP_LOG_DAYS = 30 
 VOICE_NAME = "ja-JP-NanamiNeural"
+DB_PATH = "/data/study_log.db"
+TIMER_MAX_MINUTES = 180
+TIMER_CHECK_INTERVAL = 10
+DAILY_REPORT_HOUR = 23
+DAILY_REPORT_MINUTE = 59
+FFMPEG_CLEANUP_DELAY = 1
 
 # インテント設定
 intents = discord.Intents.default()
@@ -24,12 +32,39 @@ intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 voice_state_log = {}
-message_tracker = {} 
+message_tracker = {}
 
-DB_PATH = "/data/study_log.db"
+# ================== データベースヘルパー関数 ==================
+
+def get_db_connection():
+    """データベース接続を取得"""
+    conn = sqlite3.connect(DB_PATH)
+    return conn
+
+def execute_db_query(query, params=None, fetch_one=False, fetch_all=False):
+    """データベースクエリを実行"""
+    try:
+        with get_db_connection() as conn:
+            c = conn.cursor()
+            if params:
+                c.execute(query, params)
+            else:
+                c.execute(query)
+            
+            if fetch_one:
+                return c.fetchone()
+            elif fetch_all:
+                return c.fetchall()
+            else:
+                conn.commit()
+                return None
+    except Exception as e:
+        print(f"データベースエラー: {e}")
+        return None
 
 def init_db():
-    with sqlite3.connect(DB_PATH) as conn:
+    """データベースを初期化"""
+    with get_db_connection() as conn:
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS study_logs
                      (user_id INTEGER, username TEXT, start_time TEXT, duration_seconds INTEGER, created_at TEXT)''')
@@ -37,19 +72,32 @@ def init_db():
                      (user_id INTEGER, username TEXT, date TEXT, total_seconds INTEGER, PRIMARY KEY(user_id, date))''')
         c.execute('''CREATE TABLE IF NOT EXISTS personal_timers
                      (user_id INTEGER, end_time TEXT, minutes INTEGER)''')
+        
+        # パフォーマンスインデックスを作成
+        c.execute('''CREATE INDEX IF NOT EXISTS idx_study_logs_user_created 
+                     ON study_logs(user_id, created_at)''')
+        c.execute('''CREATE INDEX IF NOT EXISTS idx_study_logs_created 
+                     ON study_logs(created_at)''')
+        c.execute('''CREATE INDEX IF NOT EXISTS idx_personal_timers_end_time 
+                     ON personal_timers(end_time)''')
+        c.execute('''CREATE INDEX IF NOT EXISTS idx_daily_summary_date 
+                     ON daily_summary(date)''')
+        
         conn.commit()
 
 def get_today_seconds(user_id):
+    """ユーザーの本日の作業時間を取得"""
     now = datetime.now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_str = today_start.isoformat()
     
-    with sqlite3.connect(DB_PATH) as conn:
-        c = conn.cursor()
-        c.execute('''SELECT SUM(duration_seconds) FROM study_logs WHERE user_id = ? AND created_at >= ?''', (user_id, today_str))
-        result = c.fetchone()[0]
+    result = execute_db_query(
+        '''SELECT SUM(duration_seconds) FROM study_logs WHERE user_id = ? AND created_at >= ?''',
+        (user_id, today_str),
+        fetch_one=True
+    )
     
-    return result if result else 0
+    return result[0] if result and result[0] else 0
 
 def format_duration(total_seconds, for_voice=False):
     hours = total_seconds // 3600
@@ -69,6 +117,7 @@ async def generate_voice(text, output_path):
     await communicate.save(output_path)
 
 async def speak_in_vc(voice_channel, text, member):
+    """音声チャネルに入ってテキストを読み上げる"""
     filename = f"voice_{member.id}.mp3"
     try:
         vc = voice_channel.guild.voice_client
@@ -81,13 +130,16 @@ async def speak_in_vc(voice_channel, text, member):
         if not vc.is_playing():
             vc.play(source)
             while vc.is_playing():
-                await asyncio.sleep(1)
+                await asyncio.sleep(FFMPEG_CLEANUP_DELAY)
             await vc.disconnect()
             
     except Exception as e:
         print(f"音声読み上げエラー: {e}")
-        if voice_channel.guild.voice_client:
-             await voice_channel.guild.voice_client.disconnect()
+        try:
+            if voice_channel.guild.voice_client:
+                await voice_channel.guild.voice_client.disconnect()
+        except Exception as disconnect_error:
+            print(f"VC切断エラー: {disconnect_error}")
     finally:
         if os.path.exists(filename):
             try:
@@ -96,6 +148,7 @@ async def speak_in_vc(voice_channel, text, member):
                 print(f"ファイル削除エラー: {e}")
 
 async def delete_previous_message(channel, message_id):
+    """チャネルの前のメッセージを削除"""
     if message_id:
         try:
             msg = await channel.fetch_message(message_id)
@@ -106,21 +159,28 @@ async def delete_previous_message(channel, message_id):
             print(f"メッセージ削除エラー: {e}")
 
 def is_active(voice_state):
+    """ユーザーが実際にVCで活動中か判定"""
     return voice_state.channel is not None and not voice_state.self_deaf
 
-async def set_personal_timer(message, minutes):
-    # メッセージ削除 (権限がないと失敗するのでtryで囲む)
+async def safe_message_delete(message):
+    """権限がない場合もスキップするメッセージ削除"""
     if message.guild:
         try:
             await message.delete()
         except Exception:
-            pass # 権限がない場合は無視
+            pass
+
+# ================== タイマー処理 ==================
+
+async def set_personal_timer(message, minutes):
+    """個人タイマーを設定"""
+    await safe_message_delete(message)
 
     if minutes <= 0:
         await message.author.send(MESSAGES["timer"]["invalid"])
         return
     
-    if minutes > 180:
+    if minutes > TIMER_MAX_MINUTES:
         await message.author.send(MESSAGES["timer"]["too_long"])
         return
 
@@ -128,16 +188,16 @@ async def set_personal_timer(message, minutes):
     end_time_str = end_time.isoformat()
     end_time_disp = end_time.strftime('%H:%M')
 
-    with sqlite3.connect(DB_PATH) as conn:
-        c = conn.cursor()
-        c.execute("INSERT INTO personal_timers VALUES (?, ?, ?)",
-                  (message.author.id, end_time_str, minutes))
-        conn.commit()
+    execute_db_query(
+        "INSERT INTO personal_timers VALUES (?, ?, ?)",
+        (message.author.id, end_time_str, minutes)
+    )
 
     await message.author.send(MESSAGES["timer"]["set"].format(minutes=minutes, end_time=end_time_disp))
 
 @bot.event
 async def on_ready():
+    """ボットが起動時に呼ばれる"""
     init_db()
     if not daily_report_task.is_running():
         daily_report_task.start()
@@ -145,7 +205,10 @@ async def on_ready():
         check_timers_task.start()
     
     print(f'ログインしました: {bot.user}')
+    await recover_voice_sessions()
 
+async def recover_voice_sessions():
+    """ボット再起動時にVCセッションを復旧"""
     print("現在のVC状態を確認中...")
     recovered_count = 0
     
@@ -163,6 +226,7 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
+    """メッセージ受信時の処理"""
     if message.author.bot:
         return
 
@@ -177,8 +241,91 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
+# ================== VC状態変更処理 ==================
+
+async def handle_voice_join(member, after, text_channel):
+    """ユーザーがVCに参加した場合の処理"""
+    if text_channel:
+        await delete_previous_message(text_channel, message_tracker[member.id].get('leave_msg_id'))
+
+    voice_state_log[member.id] = datetime.now()
+    today_sec = get_today_seconds(member.id)
+    time_str_text = format_duration(today_sec, for_voice=False)
+    time_str_speak = format_duration(today_sec, for_voice=True)
+
+    msg_type = "join" if after.channel is not None else "resume"
+    
+    if text_channel:
+        embed = discord.Embed(
+            title=MESSAGES[msg_type]["embed_title"],
+            color=MESSAGES[msg_type]["embed_color"]
+        )
+        embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
+        embed.add_field(
+            name=MESSAGES[msg_type]["fields"][0]["name"],
+            value=MESSAGES[msg_type]["fields"][0]["value"].format(current_total=time_str_text),
+            inline=False
+        )
+        join_msg = await text_channel.send(embed=embed)
+        message_tracker[member.id]['join_msg_id'] = join_msg.id
+
+    if msg_type == "join":
+        speak_text = MESSAGES["join"]["message"].format(name=member.display_name, current_total=time_str_speak)
+    else:
+        speak_text = MESSAGES["resume"]["message"].format(name=member.display_name)
+        
+    asyncio.create_task(speak_in_vc(after.channel, speak_text, member))
+
+async def handle_voice_leave(member, after, text_channel):
+    """ユーザーがVCを離れた場合の処理"""
+    if text_channel:
+        await delete_previous_message(text_channel, message_tracker[member.id].get('join_msg_id'))
+
+    if member.id in voice_state_log:
+        join_time = voice_state_log[member.id]
+        leave_time = datetime.now()
+        duration = leave_time - join_time
+        total_seconds = int(duration.total_seconds())
+
+        execute_db_query(
+            "INSERT INTO study_logs VALUES (?, ?, ?, ?, ?)",
+            (member.id, member.display_name, join_time.isoformat(), total_seconds, leave_time.isoformat())
+        )
+        
+        del voice_state_log[member.id]
+    else:
+        total_seconds = 0
+
+    current_str = format_duration(total_seconds, for_voice=False)
+    today_sec = get_today_seconds(member.id)
+    total_str = format_duration(today_sec, for_voice=False)
+    
+    msg_type = "leave" if after.channel is None else "break"
+
+    if text_channel:
+        embed = discord.Embed(
+            title=MESSAGES[msg_type]["embed_title"],
+            color=MESSAGES[msg_type]["embed_color"]
+        )
+        embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
+        
+        embed.add_field(
+            name=MESSAGES[msg_type]["fields"][0]["name"],
+            value=MESSAGES[msg_type]["fields"][0]["value"].format(time=current_str),
+            inline=False
+        )
+        embed.add_field(
+            name=MESSAGES[msg_type]["fields"][1]["name"],
+            value=MESSAGES[msg_type]["fields"][1]["value"].format(total=total_str),
+            inline=False
+        )
+        
+        leave_msg = await text_channel.send(embed=embed)
+        message_tracker[member.id]['leave_msg_id'] = leave_msg.id
+
 @bot.event
 async def on_voice_state_update(member, before, after):
+    """ボイスチャネルの状態変更を監視"""
     if member.bot:
         return
 
@@ -192,98 +339,33 @@ async def on_voice_state_update(member, before, after):
 
     # 1. 作業開始
     if not was_active and is_active_now:
-        if text_channel:
-            await delete_previous_message(text_channel, message_tracker[member.id].get('leave_msg_id'))
-
-        voice_state_log[member.id] = datetime.now()
-        today_sec = get_today_seconds(member.id)
-        time_str_text = format_duration(today_sec, for_voice=False)
-        time_str_speak = format_duration(today_sec, for_voice=True)
-
-        msg_type = "join" if before.channel is None else "resume"
-        
-        if text_channel:
-            embed = discord.Embed(
-                title=MESSAGES[msg_type]["embed_title"],
-                color=MESSAGES[msg_type]["embed_color"]
-            )
-            embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
-            embed.add_field(
-                name=MESSAGES[msg_type]["field_name"],
-                value=MESSAGES[msg_type]["field_value"].format(current_total=time_str_text),
-                inline=False
-            )
-            join_msg = await text_channel.send(embed=embed)
-            message_tracker[member.id]['join_msg_id'] = join_msg.id
-
-        if msg_type == "join":
-            speak_text = MESSAGES["join"]["voice"].format(name=member.display_name, current_total=time_str_speak)
-        else:
-            speak_text = MESSAGES["resume"]["voice"].format(name=member.display_name)
-            
-        asyncio.create_task(speak_in_vc(after.channel, speak_text, member))
+        await handle_voice_join(member, after, text_channel)
 
     # 2. 作業終了
     elif was_active and not is_active_now:
-        if text_channel:
-            await delete_previous_message(text_channel, message_tracker[member.id].get('join_msg_id'))
-
-        if member.id in voice_state_log:
-            join_time = voice_state_log[member.id]
-            leave_time = datetime.now()
-            duration = leave_time - join_time
-            total_seconds = int(duration.total_seconds())
-
-            with sqlite3.connect(DB_PATH) as conn:
-                c = conn.cursor()
-                c.execute("INSERT INTO study_logs VALUES (?, ?, ?, ?, ?)",
-                          (member.id, member.display_name, join_time.isoformat(), total_seconds, leave_time.isoformat()))
-                conn.commit()
-            
-            del voice_state_log[member.id]
-        else:
-            total_seconds = 0
-
-        current_str = format_duration(total_seconds, for_voice=False)
-        today_sec = get_today_seconds(member.id)
-        total_str = format_duration(today_sec, for_voice=False)
-        
-        msg_type = "leave" if after.channel is None else "break"
-
-        if text_channel:
-            embed = discord.Embed(
-                title=MESSAGES[msg_type]["embed_title"],
-                color=MESSAGES[msg_type]["embed_color"]
-            )
-            embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
-            
-            embed.add_field(
-                name=MESSAGES[msg_type]["field1_name"],
-                value=MESSAGES[msg_type]["field1_value"].format(time=current_str),
-                inline=False
-            )
-            embed.add_field(
-                name=MESSAGES[msg_type]["field2_name"],
-                value=MESSAGES[msg_type]["field2_value"].format(total=total_str),
-                inline=False
-            )
-            
-            leave_msg = await text_channel.send(embed=embed)
-            message_tracker[member.id]['leave_msg_id'] = leave_msg.id
+        await handle_voice_leave(member, after, text_channel)
 
 @bot.command()
 async def timer(ctx, minutes: int = 0):
+    """タイマーコマンド"""
     await set_personal_timer(ctx.message, minutes)
 
-@tasks.loop(seconds=10)
+@tasks.loop(seconds=TIMER_CHECK_INTERVAL)
 async def check_timers_task():
+    """期限切れのタイマーを確認して通知"""
     now_str = datetime.now().isoformat()
     
-    with sqlite3.connect(DB_PATH) as conn:
+    expired_timers = execute_db_query(
+        "SELECT rowid, user_id, minutes FROM personal_timers WHERE end_time <= ?",
+        (now_str,),
+        fetch_all=True
+    )
+    
+    if not expired_timers:
+        return
+
+    with get_db_connection() as conn:
         c = conn.cursor()
-        c.execute("SELECT rowid, user_id, minutes FROM personal_timers WHERE end_time <= ?", (now_str,))
-        expired_timers = c.fetchall()
-        
         for rowid, user_id, minutes in expired_timers:
             try:
                 user = bot.get_user(user_id)
@@ -301,25 +383,25 @@ async def check_timers_task():
 
 @bot.command()
 async def rank(ctx):
+    """週間ランキングを表示"""
     now = datetime.now()
     monday = now - timedelta(days=now.weekday())
     monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
     monday_str = monday.isoformat()
 
-    with sqlite3.connect(DB_PATH) as conn:
-        c = conn.cursor()
-        c.execute('''
-            SELECT username, SUM(duration_seconds) as total_time
-            FROM study_logs
-            WHERE created_at >= ?
-            GROUP BY user_id
-            ORDER BY total_time DESC
-            LIMIT 10
-        ''', (monday_str,))
-        rows = c.fetchall()
+    rows = execute_db_query(
+        '''SELECT username, SUM(duration_seconds) as total_time
+           FROM study_logs
+           WHERE created_at >= ?
+           GROUP BY user_id
+           ORDER BY total_time DESC
+           LIMIT 10''',
+        (monday_str,),
+        fetch_all=True
+    )
 
     if not rows:
-        await ctx.send(MESSAGES["rank"]["empty"])
+        await ctx.send(MESSAGES["rank"]["empty_message"])
         return
 
     embed = discord.Embed(
@@ -337,26 +419,26 @@ async def rank(ctx):
     embed.add_field(name="Top Members", value=rank_text, inline=False)
     await ctx.send(embed=embed)
 
-# ▼▼▼ 修正: DM送信＆チャット削除 ▼▼▼
 @bot.command()
 async def stats(ctx):
-    # コマンドを削除（権限があれば）
-    if ctx.guild:
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
+    """個別統計を表示"""
+    await safe_message_delete(ctx.message)
 
     user_id = ctx.author.id
     
-    with sqlite3.connect(DB_PATH) as conn:
-        c = conn.cursor()
-        c.execute('''SELECT SUM(duration_seconds) FROM study_logs WHERE user_id = ?''', (user_id,))
-        result = c.fetchone()[0]
-        total_seconds = result if result else 0
-        
-        c.execute('''SELECT MIN(created_at) FROM study_logs WHERE user_id = ?''', (user_id,))
-        first_date_str = c.fetchone()[0]
+    total_result = execute_db_query(
+        '''SELECT SUM(duration_seconds) FROM study_logs WHERE user_id = ?''',
+        (user_id,),
+        fetch_one=True
+    )
+    total_seconds = total_result[0] if total_result and total_result[0] else 0
+    
+    first_date_result = execute_db_query(
+        '''SELECT MIN(created_at) FROM study_logs WHERE user_id = ?''',
+        (user_id,),
+        fetch_one=True
+    )
+    first_date_str = first_date_result[0] if first_date_result else None
 
     time_str = format_duration(total_seconds, for_voice=False)
     
@@ -375,27 +457,22 @@ async def stats(ctx):
     )
     embed.set_thumbnail(url=ctx.author.display_avatar.url)
     embed.add_field(
-        name=MESSAGES["stats"]["total_label"], 
-        value=MESSAGES["stats"]["total_value"].format(total_time=time_str), 
+        name=MESSAGES["stats"]["fields"][0]["name"], 
+        value=MESSAGES["stats"]["fields"][0]["value"].format(total_time=time_str), 
         inline=False
     )
     embed.add_field(
-        name=MESSAGES["stats"]["first_day_label"], 
-        value=MESSAGES["stats"]["first_day_value"].format(date=date_disp, days=days_since), 
+        name=MESSAGES["stats"]["fields"][1]["name"], 
+        value=MESSAGES["stats"]["fields"][1]["value"].format(date=date_disp, days=days_since), 
         inline=False
     )
     
-    # DMに送信
     await ctx.author.send(embed=embed)
 
-# ▼▼▼ 修正: DM送信＆チャット削除 ▼▼▼
 @bot.command()
 async def help(ctx):
-    if ctx.guild:
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
+    """ヘルプを表示"""
+    await safe_message_delete(ctx.message)
 
     embed = discord.Embed(
         title=MESSAGES["help"]["embed_title"],
@@ -406,19 +483,18 @@ async def help(ctx):
     for cmd_name, cmd_desc in MESSAGES["help"]["commands"]:
         embed.add_field(name=cmd_name, value=cmd_desc, inline=False)
     
-    # DMに送信
     await ctx.author.send(embed=embed)
 
 @bot.command()
 async def add(ctx, member: discord.Member, minutes: int):
+    """ユーザーの作業時間を追加・削除"""
     now = datetime.now()
     total_seconds = minutes * 60
     
-    with sqlite3.connect(DB_PATH) as conn:
-        c = conn.cursor()
-        c.execute("INSERT INTO study_logs VALUES (?, ?, ?, ?, ?)",
-                  (member.id, member.display_name, now.isoformat(), total_seconds, now.isoformat()))
-        conn.commit()
+    execute_db_query(
+        "INSERT INTO study_logs VALUES (?, ?, ?, ?, ?)",
+        (member.id, member.display_name, now.isoformat(), total_seconds, now.isoformat())
+    )
     
     new_total = get_today_seconds(member.id)
     time_str = format_duration(new_total)
@@ -426,8 +502,9 @@ async def add(ctx, member: discord.Member, minutes: int):
     action = "追加" if minutes > 0 else "削除"
     await ctx.send(f"✅ **{member.display_name}** さんの時間を {abs(minutes)}分 {action}しました。\n今日の合計: **{time_str}**")
 
-@tasks.loop(time=time(hour=23, minute=59))
+@tasks.loop(time=time(hour=DAILY_REPORT_HOUR, minute=DAILY_REPORT_MINUTE))
 async def daily_report_task():
+    """毎日日報を送信し、ログをクリーンアップ"""
     channel = bot.get_channel(SUMMARY_CHANNEL_ID)
     now = datetime.now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -435,46 +512,99 @@ async def daily_report_task():
     today_date_str = now.strftime('%Y-%m-%d')
     today_disp_str = now.strftime('%Y/%m/%d')
 
-    with sqlite3.connect(DB_PATH) as conn:
-        c = conn.cursor()
-        c.execute('''SELECT user_id, username, SUM(duration_seconds) as total_time FROM study_logs WHERE created_at >= ? GROUP BY user_id ORDER BY total_time DESC''', (today_str,))
-        rows = c.fetchall()
+    # 日報データを取得
+    rows = execute_db_query(
+        '''SELECT user_id, username, SUM(duration_seconds) as total_time 
+           FROM study_logs 
+           WHERE created_at >= ? 
+           GROUP BY user_id 
+           ORDER BY total_time DESC''',
+        (today_str,),
+        fetch_all=True
+    )
 
-        if channel:
-            if not rows:
-                await channel.send(MESSAGES["report"]["empty"])
-            else:
-                embed = discord.Embed(
-                    title=MESSAGES["report"]["embed_title"].format(date=today_disp_str),
-                    description=MESSAGES["report"]["embed_desc"],
-                    color=MESSAGES["report"]["embed_color"]
-                )
-                report_text = ""
-                for _, username, total_seconds in rows:
-                    time_str = format_duration(total_seconds, for_voice=True)
-                    report_text += MESSAGES["report"]["row"].format(name=username, time=time_str)
-                
-                embed.add_field(name="Results", value=report_text, inline=False)
-                await channel.send(embed=embed)
+    if channel:
+        if not rows:
+            await channel.send(MESSAGES["report"]["empty_message"])
+        else:
+            embed = discord.Embed(
+                title=MESSAGES["report"]["embed_title"].format(date=today_disp_str),
+                description=MESSAGES["report"]["embed_desc"],
+                color=MESSAGES["report"]["embed_color"]
+            )
+            report_text = ""
+            for _, username, total_seconds in rows:
+                time_str = format_duration(total_seconds, for_voice=True)
+                report_text += MESSAGES["report"]["row"].format(name=username, time=time_str)
+            
+            embed.add_field(name="Results", value=report_text, inline=False)
+            await channel.send(embed=embed)
+    
+    # データベースに日報を保存
+    logs_deleted = 0
+    summary_deleted = 0
+    db_size_mb = 0
+    
+    with get_db_connection() as conn:
+        c = conn.cursor()
         
         if rows:
             for user_id, username, total_seconds in rows:
-                c.execute('''INSERT OR REPLACE INTO daily_summary (user_id, username, date, total_seconds) VALUES (?, ?, ?, ?)''', (user_id, username, today_date_str, total_seconds))
+                c.execute(
+                    '''INSERT OR REPLACE INTO daily_summary (user_id, username, date, total_seconds) 
+                       VALUES (?, ?, ?, ?)''',
+                    (user_id, username, today_date_str, total_seconds)
+                )
         
+        # 古いDaily Summaryデータを削除（1年以上前）
+        cleanup_summary_threshold = now - timedelta(days=365)
+        cleanup_summary_threshold_str = cleanup_summary_threshold.strftime('%Y-%m-%d')
+        c.execute("DELETE FROM daily_summary WHERE date < ?", (cleanup_summary_threshold_str,))
+        summary_deleted = c.rowcount
+        
+        # 古いログを削除
         cleanup_threshold = now - timedelta(days=KEEP_LOG_DAYS)
         c.execute("DELETE FROM study_logs WHERE created_at < ?", (cleanup_threshold.isoformat(),))
-        if c.rowcount > 0:
-            c.execute("VACUUM")
+        logs_deleted = c.rowcount
+        
+        # VACUUM を実行（定期的な断片化防止）
+        c.execute("VACUUM")
         conn.commit()
+        
+        # データベースサイズを監視
+        db_size_bytes = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
+        db_size_mb = db_size_bytes / (1024 * 1024)
+        print(f"📊 DBクリーンアップ完了 - スタディログ削除: {logs_deleted}件, Daily Summary削除: {summary_deleted}件, DB容量: {db_size_mb:.2f} MB")
 
+    # バックアップを送信（クリーンアップ情報を含める）
+    await send_database_backup(today_date_str, today_disp_str, logs_deleted, summary_deleted, db_size_mb)
+
+async def send_database_backup(today_date_str, today_disp_str, logs_deleted=0, summary_deleted=0, db_size_mb=0):
+    """データベースのバックアップをチャネルに送信"""
     backup_channel = bot.get_channel(BACKUP_CHANNEL_ID)
     if backup_channel and os.path.exists(DB_PATH):
         try:
+            # クリーンアップ情報をEmbed形式で送信
+            embed = discord.Embed(
+                title="🔒 データベース自動バックアップ",
+                description=f"{today_disp_str} の日次バックアップとクリーンアップを実行しました",
+                color=0x36393F
+            )
+            
+            cleanup_info = f"""**スタディログ削除:** {logs_deleted}件
+**Daily Summary削除:** {summary_deleted}件
+**DB容量:** {db_size_mb:.2f} MB"""
+            
+            embed.add_field(name="📊 クリーンアップ情報", value=cleanup_info, inline=False)
+            embed.set_footer(text="自動実行")
+            
+            # バックアップファイルを送信
             backup_filename = f"backup_{today_date_str}.db"
             file = discord.File(DB_PATH, filename=backup_filename)
-            await backup_channel.send(f"🔒 **データベース自動バックアップ** ({today_disp_str})", file=file)
+            await backup_channel.send(embed=embed, file=file)
             print("バックアップ送信完了")
         except Exception as e:
             print(f"バックアップ送信エラー: {e}")
+
 
 bot.run(TOKEN)

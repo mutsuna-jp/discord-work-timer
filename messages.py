@@ -5,12 +5,10 @@ MESSAGES = {
     # 👋 入室時
     # ---------------------------
     "join": {
-        "voice": "{name}さん、が作業を始めました。",
+        "message": "{name}さん、が作業を始めました。",
         "embed_title": "🚀 作業スタート！",
         "embed_color": 0x00FF00, # 緑色
-        # フィールド名と値
-        "field_name": "本日の作業時間",
-        "field_value": "**{current_total}** "
+        "fields": [{"name": "本日の作業時間", "value": "**{current_total}**"}]
     },
 
     # ---------------------------
@@ -19,18 +17,19 @@ MESSAGES = {
     "leave": {
         "embed_title": "🍵 お疲れ様でした",
         "embed_color": 0x00BFFF, # 水色
-        "field1_name": "今回の作業時間",
-        "field1_value": "**{time}**",
-        "field2_name": "本日の総作業時間",
-        "field2_value": "**{total}**",
+        "fields": [
+            {"name": "今回の作業時間", "value": "**{time}**"},
+            {"name": "本日の総作業時間", "value": "**{total}**"}
+        ]
     },
 
     # ---------------------------
     # 🏆 ランキング (!rank)
     # ---------------------------
     "rank": {
-        "empty": "今週はまだ誰も作業していません...！一番乗りを目指しましょう！🏃‍♂️",
+        "empty_message": "今週はまだ誰も作業していません...！一番乗りを目指しましょう！🏃‍♂️",
         "embed_title": "🏆 今週の作業時間ランキング",
+        "embed_desc": "みんなの頑張りがこちら！💪",
         "embed_color": 0xFFD700, # 金色
         "row": "{icon} **{name}**: {time}\n"
     },
@@ -42,21 +41,20 @@ MESSAGES = {
         "embed_title": "📊 {name} さんの通算記録",
         "embed_desc": "これまでの積み上げ成果です！すごい！👏",
         "embed_color": 0x9932CC, # 紫色
-        "total_label": "⏳ 累計作業時間",
-        "total_value": "**{total_time}**",
-        "first_day_label": "📅 計測開始日",
-        "first_day_value": "{date} ({days}日前)"
+        "fields": [
+            {"name": "⏳ 累計作業時間", "value": "**{total_time}**"},
+            {"name": "📅 計測開始日", "value": "{date} ({days}日前)"}
+        ]
     },
 
     # ---------------------------
     # 🔥 作業再開時 (追加)
     # ---------------------------
     "resume": {
-        "voice": "{name}さん、作業再開です。",
+        "message": "{name}さん、作業再開です。",
         "embed_title": "🔥 作業再開！",
         "embed_color": 0xFF4500, # オレンジ色
-        "field_name": "今日の積み上げ",
-        "field_value": "**{current_total}**"
+        "fields": [{"name": "今日の積み上げ", "value": "**{current_total}**"}]
     },
 
     # ---------------------------
@@ -65,17 +63,17 @@ MESSAGES = {
     "break": {
         "embed_title": "☕ 休憩中...",
         "embed_color": 0xFFA500, # 黄色
-        "field1_name": "今回の作業時間",
-        "field1_value": "**{time}**",
-        "field2_name": "本日の総作業時間",
-        "field2_value": "**{total}**",
+        "fields": [
+            {"name": "今回の作業時間", "value": "**{time}**"},
+            {"name": "本日の総作業時間", "value": "**{total}**"}
+        ]
     },
 
     # ---------------------------
     # 📅 日報 (23:59)
     # ---------------------------
     "report": {
-        "empty": "今日は誰も作業しませんでした...明日は頑張りましょう！🛌",
+        "empty_message": "今日は誰も作業しませんでした...明日は頑張りましょう！🛌",
         "embed_title": "📅 本日の作業レポート ({date})",
         "embed_desc": "みなさんお疲れ様でした！本日の成果です✨",
         "embed_color": 0xFF69B4, # ピンク色
@@ -83,20 +81,17 @@ MESSAGES = {
     },
 
     # ---------------------------
-    # ⏰ 個人用タイマー (追加)
+    # ⏰ 個人用タイマー
     # ---------------------------
     "timer": {
-        # セット時のDM
         "set": "⏰ **{minutes}分** のタイマーをセットしました。\n(終了予定: {end_time})",
-        # 完了時のDM
         "finish": "⏰ **{minutes}分** が経過しました！\nお疲れ様です、少し休憩しませんか？☕",
-        # エラー時
         "invalid": "⚠️ 時間は整数（分）で指定してください。\n例: `!30` (30分)",
         "too_long": "⚠️ タイマーは最大 180分 (3時間) まで設定可能です。"
     },
 
     # ---------------------------
-    # ℹ️ ヘルプ (!help) (追加)
+    # ℹ️ ヘルプ (!help)
     # ---------------------------
     "help": {
         "embed_title": "📖 ボットの使い方",
