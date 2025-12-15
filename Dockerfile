@@ -2,6 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+ENV PYTHONUNBUFFERED=1
+ENV IO_ENCODING=UTF-8
+
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     && apt-get clean \
