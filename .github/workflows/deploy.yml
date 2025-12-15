@@ -18,7 +18,7 @@ jobs:
           port: 22
           script: |
             # フォルダに移動
-            cd ~/study-timer
+            cd ~/work-timer
             # 最新のコードを取得
             git pull origin main
             # Dockerを再構築して再起動
