@@ -4,6 +4,16 @@ from datetime import datetime
 from utils import format_duration, speak_in_vc, delete_previous_message, create_embed_from_config
 from messages import MESSAGES
 
+# 👇 マイルストーン設定（時間: "ロール名"）
+# Discordサーバー側でもこれと同じ名前のロールを作成してください！
+MILESTONES = {
+    10: "🥉 10時間達成",
+    50: "🥈 50時間達成",
+    100: "🥇 100時間達成",
+    500: "🏆 500時間達成",
+    1000: "👑 レジェンド"
+}
+
 class StudyCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -99,25 +109,60 @@ class StudyCog(commands.Cog):
         if text_channel:
             await delete_previous_message(text_channel, prev_join_msg_id)
 
+        total_seconds_session = 0 # セッション時間の初期化
+
         if member.id in self.voice_state_log:
             join_time = self.voice_state_log[member.id]
             leave_time = datetime.now()
             duration = leave_time - join_time
-            total_seconds = int(duration.total_seconds())
+            total_seconds_session = int(duration.total_seconds())
 
             await self.bot.db.add_study_log(
                 member.id, 
                 member.display_name, 
                 join_time, 
-                total_seconds, 
+                total_seconds_session, 
                 leave_time
             )
             
             del self.voice_state_log[member.id]
-        else:
-            total_seconds = 0
+        
+        # --- 👇 ここから追加: 称号バッジ付与ロジック ---
+        
+        # 最新の累計時間を取得
+        current_total_sec = await self.bot.db.get_total_seconds(member.id)
+        current_hours = current_total_sec // 3600
+        
+        # 今回の作業前の時間
+        prev_total_sec = current_total_sec - total_seconds_session
+        prev_hours = prev_total_sec // 3600
 
-        current_str = format_duration(total_seconds, for_voice=False)
+        # 時間の境界をまたいだかチェック
+        if prev_hours < current_hours:
+            for hours, role_name in MILESTONES.items():
+                # 今回の作業で境界を超えた場合
+                if prev_hours < hours <= current_hours:
+                    # ロールを取得して付与
+                    role = discord.utils.get(member.guild.roles, name=role_name)
+                    if role:
+                        try:
+                            await member.add_roles(role)
+                            # お祝いメッセージ
+                            if text_channel:
+                                embed = discord.Embed(
+                                    title="🎉 称号獲得！",
+                                    description=f"{member.mention}さんが **{role_name}** の称号を獲得しました！\nおめでとうございます！👏👏",
+                                    color=0xFFD700
+                                )
+                                await text_channel.send(embed=embed)
+                        except discord.Forbidden:
+                            print(f"権限エラー: ロール {role_name} を付与できませんでした。Botのロール順位を確認してください。")
+                    else:
+                        print(f"設定エラー: ロール「{role_name}」がサーバーに見つかりません。")
+        
+        # --- 👆 ここまで追加 ---
+
+        current_str = format_duration(total_seconds_session, for_voice=False) # 変数名を合わせました
         today_sec = await self.bot.db.get_today_seconds(member.id)
         total_str = format_duration(today_sec, for_voice=False)
         

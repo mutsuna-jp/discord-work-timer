@@ -74,6 +74,15 @@ class Database:
         )
         return result[0] if result and result[0] else 0
 
+    async def get_total_seconds(self, user_id):
+        """ユーザーの累計作業時間を取得"""
+        result = await self.execute(
+            '''SELECT SUM(duration_seconds) FROM study_logs WHERE user_id = ?''',
+            (user_id,),
+            fetch_one=True
+        )
+        return result[0] if result and result[0] else 0
+
     async def get_message_state(self, user_id):
         """ユーザーのメッセージ状態を取得"""
         return await self.execute(
