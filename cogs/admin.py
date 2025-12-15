@@ -21,6 +21,12 @@ class AdminCog(commands.Cog):
             if isinstance(cmd_item, (list, tuple)) and len(cmd_item) >= 2:
                 embed.add_field(name=cmd_item[0], value=cmd_item[1], inline=False)
         
+        # 権限チェックと通知
+        if ctx.guild:
+            perms = ctx.channel.permissions_for(ctx.guild.me)
+            if not perms.manage_messages:
+                embed.set_footer(text="⚠️ 注意: Botに「メッセージの管理」権限がないため、コマンド(!help)を自動削除できませんでした。")
+
         await ctx.author.send(embed=embed)
 
     @commands.command()

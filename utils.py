@@ -59,8 +59,12 @@ async def safe_message_delete(message):
     if message.guild:
         try:
             await message.delete()
-        except Exception:
+        except discord.Forbidden:
+            print(f"メッセージ削除失敗: 権限不足 (Manage Messages) - Channel: {message.channel.name}")
+        except discord.NotFound:
             pass
+        except Exception as e:
+            print(f"メッセージ削除エラー: {e}")
 
 async def delete_previous_message(channel, message_id):
     """チャネルの前のメッセージを削除"""
