@@ -5,7 +5,7 @@ MESSAGES = {
     # 👋 入室時
     # ---------------------------
     "join": {
-        "voice": "{name}さん、現在、{current_total}です。",
+        "voice": "{name}さん、が作業を始めました。",
         "embed_title": "🚀 作業スタート！",
         "embed_color": 0x00FF00, # 緑色
         # フィールド名と値
