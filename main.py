@@ -111,7 +111,26 @@ async def on_ready():
     init_db()
     if not daily_report_task.is_running():
         daily_report_task.start()
+    
     print(f'ログインしました: {bot.user}')
+
+    # ▼▼▼ 再起動時のセッション自動復旧処理 ▼▼▼
+    print("現在のVC状態を確認中...")
+    recovered_count = 0
+    
+    for guild in bot.guilds:
+        for vc in guild.voice_channels:
+            for member in vc.members:
+                # ボットではなく、かつ作業中（ミュートしてない）状態の人
+                if not member.bot and is_active(member.voice):
+                    if member.id not in voice_state_log:
+                        # 現在時刻を「入室時間」として仮登録
+                        voice_state_log[member.id] = datetime.now()
+                        recovered_count += 1
+                        print(f"復旧: {member.display_name} さんの計測を再開しました")
+    
+    if recovered_count > 0:
+        print(f"合計 {recovered_count} 名の作業セッションを復旧しました。")
 
 @bot.event
 async def on_voice_state_update(member, before, after):
@@ -126,9 +145,7 @@ async def on_voice_state_update(member, before, after):
     was_active = is_active(before)
     is_active_now = is_active(after)
 
-    # ---------------------------
     # 1. 作業開始 (入室、またはミュート解除)
-    # ---------------------------
     if not was_active and is_active_now:
         # ★必ず前回の「退室/休憩」ログを消す
         if text_channel:
@@ -139,7 +156,6 @@ async def on_voice_state_update(member, before, after):
         time_str_text = format_duration(today_sec, for_voice=False)
         time_str_speak = format_duration(today_sec, for_voice=True)
 
-        # 入室か、再開か判定
         msg_type = "join" if before.channel is None else "resume"
         
         if text_channel:
@@ -156,7 +172,6 @@ async def on_voice_state_update(member, before, after):
             join_msg = await text_channel.send(embed=embed)
             message_tracker[member.id]['join_msg_id'] = join_msg.id
 
-        # 読み上げ
         if msg_type == "join":
             speak_text = MESSAGES["join"]["voice"].format(name=member.display_name, current_total=time_str_speak)
         else:
@@ -164,15 +179,12 @@ async def on_voice_state_update(member, before, after):
             
         asyncio.create_task(speak_in_vc(after.channel, speak_text, member))
 
-    # ---------------------------
     # 2. 作業終了 (退室、またはミュート開始)
-    # ---------------------------
     elif was_active and not is_active_now:
         # ★必ず前回の「入室/再開」ログを消す
         if text_channel:
             await delete_previous_message(text_channel, message_tracker[member.id].get('join_msg_id'))
 
-        # DB記録処理（記録できる場合のみ）
         if member.id in voice_state_log:
             join_time = voice_state_log[member.id]
             leave_time = datetime.now()
@@ -187,15 +199,12 @@ async def on_voice_state_update(member, before, after):
             
             del voice_state_log[member.id]
         else:
-            # ログがない（エラー等）場合は時間を0として扱う
             total_seconds = 0
 
-        # 表示用時間計算
         current_str = format_duration(total_seconds, for_voice=False)
         today_sec = get_today_seconds(member.id)
         total_str = format_duration(today_sec, for_voice=False)
         
-        # 退室か、休憩か判定
         msg_type = "leave" if after.channel is None else "break"
 
         if text_channel:
@@ -256,6 +265,28 @@ async def rank(ctx):
     
     embed.add_field(name="Top Members", value=rank_text, inline=False)
     await ctx.send(embed=embed)
+
+@bot.command()
+async def add(ctx, member: discord.Member, minutes: int):
+    """
+    指定したメンバーの作業時間を手動で追加・削除します。
+    使い方: !add @ユーザー名 30  (30分追加)
+           !add @ユーザー名 -10 (10分削除)
+    """
+    now = datetime.now()
+    total_seconds = minutes * 60
+    
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT INTO study_logs VALUES (?, ?, ?, ?, ?)",
+                  (member.id, member.display_name, now.isoformat(), total_seconds, now.isoformat()))
+        conn.commit()
+    
+    new_total = get_today_seconds(member.id)
+    time_str = format_duration(new_total)
+    
+    action = "追加" if minutes > 0 else "削除"
+    await ctx.send(f"✅ **{member.display_name}** さんの時間を {abs(minutes)}分 {action}しました。\n今日の合計: **{time_str}**")
 
 @tasks.loop(time=time(hour=23, minute=59))
 async def daily_report_task():
