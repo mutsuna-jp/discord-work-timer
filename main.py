@@ -11,7 +11,7 @@ from messages import MESSAGES
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', 0))
 SUMMARY_CHANNEL_ID = int(os.getenv('SUMMARY_CHANNEL_ID', 0))
-BACKUP_CHANNEL_ID = int(os.getenv('BACKUP_CHANNEL_ID', 0)) # 追加
+BACKUP_CHANNEL_ID = int(os.getenv('BACKUP_CHANNEL_ID', 0))
 KEEP_LOG_DAYS = 30 
 VOICE_NAME = "ja-JP-NanamiNeural"
 
@@ -146,7 +146,10 @@ async def on_voice_state_update(member, before, after):
                     title=MESSAGES["leave"]["embed_title"],
                     color=MESSAGES["leave"]["embed_color"]
                 )
-                embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)embed.add_field(
+                embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
+                
+                # ▼▼▼ 修正箇所: 改行を入れ、messages.pyの値を使うように変更 ▼▼▼
+                embed.add_field(
                     name=MESSAGES["leave"]["field1_name"],
                     value=MESSAGES["leave"]["field1_value"].format(time=current_str),
                     inline=False
@@ -156,6 +159,8 @@ async def on_voice_state_update(member, before, after):
                     value=MESSAGES["leave"]["field2_value"].format(total=total_str),
                     inline=False
                 )
+                # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+                
                 await text_channel.send(embed=embed)
             
             del voice_state_log[member.id]
@@ -245,7 +250,7 @@ async def daily_report_task():
     conn.commit()
     conn.close()
 
-    # ▼▼▼ 追加機能: データベースのバックアップ送信 ▼▼▼
+    # ▼▼▼ データベースのバックアップ送信 ▼▼▼
     backup_channel = bot.get_channel(BACKUP_CHANNEL_ID)
     if backup_channel and os.path.exists(DB_PATH):
         try:
@@ -256,6 +261,5 @@ async def daily_report_task():
             print("バックアップ送信完了")
         except Exception as e:
             print(f"バックアップ送信エラー: {e}")
-
 
 bot.run(TOKEN)
