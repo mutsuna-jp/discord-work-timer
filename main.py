@@ -65,9 +65,8 @@ async def generate_voice(text, output_path):
     communicate = edge_tts.Communicate(text, VOICE_NAME)
     await communicate.save(output_path)
 
-# ▼▼▼ 修正: ファイル名をユニークにして競合回避 & 削除処理追加 ▼▼▼
 async def speak_in_vc(voice_channel, text, member):
-    filename = f"voice_{member.id}.mp3"  # ユーザーIDを含めたファイル名
+    filename = f"voice_{member.id}.mp3"
     try:
         vc = voice_channel.guild.voice_client
         if not vc:
@@ -87,7 +86,6 @@ async def speak_in_vc(voice_channel, text, member):
         if voice_channel.guild.voice_client:
              await voice_channel.guild.voice_client.disconnect()
     finally:
-        # 使い終わったファイルを削除
         if os.path.exists(filename):
             try:
                 os.remove(filename)
@@ -104,9 +102,8 @@ async def delete_previous_message(channel, message_id):
         except Exception as e:
             print(f"メッセージ削除エラー: {e}")
 
-# ▼▼▼ 追加: 「作業中」かどうかを判定する関数（スピーカーミュート対策） ▼▼▼
+# 作業中かどうかを判定（VCにいて、かつスピーカーミュートしてない）
 def is_active(voice_state):
-    # VCに参加しており、かつスピーカーミュート(self_deaf)していない場合のみTrue
     return voice_state.channel is not None and not voice_state.self_deaf
 
 @bot.event
@@ -126,40 +123,56 @@ async def on_voice_state_update(member, before, after):
     if member.id not in message_tracker:
         message_tracker[member.id] = {}
 
-    # ▼▼▼ ロジック変更: is_activeを使って判定 ▼▼▼
     was_active = is_active(before)
     is_active_now = is_active(after)
 
+    # ---------------------------
     # 1. 作業開始 (入室、またはミュート解除)
+    # ---------------------------
     if not was_active and is_active_now:
-        voice_state_log[member.id] = datetime.now()
-        today_sec = get_today_seconds(member.id)
-        
-        time_str_text = format_duration(today_sec, for_voice=False)
+        # ★必ず前回の「退室/休憩」ログを消す
         if text_channel:
             await delete_previous_message(text_channel, message_tracker[member.id].get('leave_msg_id'))
-            
+
+        voice_state_log[member.id] = datetime.now()
+        today_sec = get_today_seconds(member.id)
+        time_str_text = format_duration(today_sec, for_voice=False)
+        time_str_speak = format_duration(today_sec, for_voice=True)
+
+        # 入室か、再開か判定
+        msg_type = "join" if before.channel is None else "resume"
+        
+        if text_channel:
             embed = discord.Embed(
-                title=MESSAGES["join"]["embed_title"],
-                color=MESSAGES["join"]["embed_color"]
+                title=MESSAGES[msg_type]["embed_title"],
+                color=MESSAGES[msg_type]["embed_color"]
             )
             embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
             embed.add_field(
-                name=MESSAGES["join"]["field_name"],
-                value=MESSAGES["join"]["field_value"].format(current_total=time_str_text),
+                name=MESSAGES[msg_type]["field_name"],
+                value=MESSAGES[msg_type]["field_value"].format(current_total=time_str_text),
                 inline=False
             )
-            
             join_msg = await text_channel.send(embed=embed)
             message_tracker[member.id]['join_msg_id'] = join_msg.id
 
-        time_str_speak = format_duration(today_sec, for_voice=True)
-        speak_text = MESSAGES["join"]["voice"].format(name=member.display_name, current_total=time_str_speak)
-        # 修正: memberを渡す
+        # 読み上げ
+        if msg_type == "join":
+            speak_text = MESSAGES["join"]["voice"].format(name=member.display_name, current_total=time_str_speak)
+        else:
+            speak_text = MESSAGES["resume"]["voice"].format(name=member.display_name)
+            
         asyncio.create_task(speak_in_vc(after.channel, speak_text, member))
 
+    # ---------------------------
     # 2. 作業終了 (退室、またはミュート開始)
+    # ---------------------------
     elif was_active and not is_active_now:
+        # ★必ず前回の「入室/再開」ログを消す
+        if text_channel:
+            await delete_previous_message(text_channel, message_tracker[member.id].get('join_msg_id'))
+
+        # DB記録処理（記録できる場合のみ）
         if member.id in voice_state_log:
             join_time = voice_state_log[member.id]
             leave_time = datetime.now()
@@ -171,35 +184,40 @@ async def on_voice_state_update(member, before, after):
                 c.execute("INSERT INTO study_logs VALUES (?, ?, ?, ?, ?)",
                           (member.id, member.display_name, join_time.isoformat(), total_seconds, leave_time.isoformat()))
                 conn.commit()
-
-            current_str = format_duration(total_seconds, for_voice=False)
-            today_sec = get_today_seconds(member.id)
-            total_str = format_duration(today_sec, for_voice=False)
-            
-            if text_channel:
-                await delete_previous_message(text_channel, message_tracker[member.id].get('join_msg_id'))
-
-                embed = discord.Embed(
-                    title=MESSAGES["leave"]["embed_title"],
-                    color=MESSAGES["leave"]["embed_color"]
-                )
-                embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
-                
-                embed.add_field(
-                    name=MESSAGES["leave"]["field1_name"],
-                    value=MESSAGES["leave"]["field1_value"].format(time=current_str),
-                    inline=False
-                )
-                embed.add_field(
-                    name=MESSAGES["leave"]["field2_name"],
-                    value=MESSAGES["leave"]["field2_value"].format(total=total_str),
-                    inline=False
-                )
-                
-                leave_msg = await text_channel.send(embed=embed)
-                message_tracker[member.id]['leave_msg_id'] = leave_msg.id
             
             del voice_state_log[member.id]
+        else:
+            # ログがない（エラー等）場合は時間を0として扱う
+            total_seconds = 0
+
+        # 表示用時間計算
+        current_str = format_duration(total_seconds, for_voice=False)
+        today_sec = get_today_seconds(member.id)
+        total_str = format_duration(today_sec, for_voice=False)
+        
+        # 退室か、休憩か判定
+        msg_type = "leave" if after.channel is None else "break"
+
+        if text_channel:
+            embed = discord.Embed(
+                title=MESSAGES[msg_type]["embed_title"],
+                color=MESSAGES[msg_type]["embed_color"]
+            )
+            embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
+            
+            embed.add_field(
+                name=MESSAGES[msg_type]["field1_name"],
+                value=MESSAGES[msg_type]["field1_value"].format(time=current_str),
+                inline=False
+            )
+            embed.add_field(
+                name=MESSAGES[msg_type]["field2_name"],
+                value=MESSAGES[msg_type]["field2_value"].format(total=total_str),
+                inline=False
+            )
+            
+            leave_msg = await text_channel.send(embed=embed)
+            message_tracker[member.id]['leave_msg_id'] = leave_msg.id
 
 @bot.command()
 async def rank(ctx):
