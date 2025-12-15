@@ -249,3 +249,6 @@ async def daily_report_task():
             print("バックアップ送信完了")
         except Exception as e:
             print(f"バックアップ送信エラー: {e}")
+
+
+bot.run(TOKEN)
