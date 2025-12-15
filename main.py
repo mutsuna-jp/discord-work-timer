@@ -146,9 +146,16 @@ async def on_voice_state_update(member, before, after):
                     title=MESSAGES["leave"]["embed_title"],
                     color=MESSAGES["leave"]["embed_color"]
                 )
-                embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
-                embed.add_field(name=MESSAGES["leave"]["field1_name"], value=f"**{current_str}**", inline=False)
-                embed.add_field(name=MESSAGES["leave"]["field2_name"], value=f"**{total_str}**", inline=False)
+                embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)embed.add_field(
+                    name=MESSAGES["leave"]["field1_name"],
+                    value=MESSAGES["leave"]["field1_value"].format(time=current_str),
+                    inline=False
+                )
+                embed.add_field(
+                    name=MESSAGES["leave"]["field2_name"],
+                    value=MESSAGES["leave"]["field2_value"].format(total=total_str),
+                    inline=False
+                )
                 await text_channel.send(embed=embed)
             
             del voice_state_log[member.id]
