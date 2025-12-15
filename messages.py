@@ -8,7 +8,7 @@ MESSAGES = {
         "message": "{name}さん、が作業を始めました。",
         "embed_title": "🚀 作業スタート！",
         "embed_color": 0x00FF00, # 緑色
-        "fields": [{"name": "本日の作業時間", "value": "**{current_total}**"}]
+        "fields": [{"name": "", "value": "**{current_total}**～"}]
     },
 
     # ---------------------------

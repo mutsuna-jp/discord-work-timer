@@ -117,8 +117,8 @@ class WorkTimerBot(commands.Bot):
 
             if channel:
                 embed = discord.Embed(
-                    title="⚠️ システム再起動",
-                    description="メンテナンスのため再起動を行います。\n**完了通知が出るまでの間、記録は停止します。**",
+                    title="⚠️ システム停止",
+                    description="メンテナンスのため一時的にシステムを停止します。\n**再起動するまでの間、記録は停止します。**",
                     color=0xFF0000 # 赤色
                 )
                 await channel.send(embed=embed)

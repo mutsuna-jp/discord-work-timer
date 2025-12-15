@@ -47,6 +47,7 @@ class TimerCog(commands.Cog):
 
     @app_commands.command(name="timer", description="指定した分数のタイマーを設定します")
     @app_commands.describe(minutes="設定する分数（分）")
+    @app_commands.default_permissions(send_messages=True)
     async def timer(self, interaction: discord.Interaction, minutes: int):
         """タイマーコマンド"""
         await self.set_personal_timer(interaction, minutes)

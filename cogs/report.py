@@ -41,6 +41,7 @@ class ReportCog(commands.Cog):
         self.warning_task.cancel()
 
     @app_commands.command(name="rank", description="週間ランキングを表示します")
+    @app_commands.default_permissions(send_messages=True)
     async def rank(self, interaction: discord.Interaction):
         """週間ランキングを表示"""
         # インタラクションへの応答はこれで行う（DM送信するので、ここではEphemeralな応答をする）
@@ -85,6 +86,7 @@ class ReportCog(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="stats", description="あなたの累計作業時間を表示します")
+    @app_commands.default_permissions(send_messages=True)
     async def stats(self, interaction: discord.Interaction):
         """個別統計を表示"""
         await interaction.response.defer(ephemeral=True)

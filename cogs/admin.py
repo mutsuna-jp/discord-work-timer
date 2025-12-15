@@ -10,6 +10,7 @@ class AdminCog(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="help", description="Botの使い方を表示します")
+    @app_commands.default_permissions(send_messages=True)
     async def help(self, interaction: discord.Interaction):
         """ヘルプを表示"""
         # await safe_message_delete(ctx.message) <- インタラクションなので削除不要

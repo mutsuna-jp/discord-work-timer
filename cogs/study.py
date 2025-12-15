@@ -72,6 +72,7 @@ class StudyCog(commands.Cog):
 
     @app_commands.command(name="task", description="現在取り組んでいるタスクを設定します")
     @app_commands.describe(content="タスクの内容")
+    @app_commands.default_permissions(send_messages=True)
     async def task(self, interaction: discord.Interaction, content: str):
         """タスク設定コマンド"""
         await self.bot.db.set_user_task(interaction.user.id, content)
