@@ -20,7 +20,8 @@ intents = discord.Intents.default()
 intents.voice_states = True
 intents.message_content = True
 
-bot = commands.Bot(command_prefix='!', intents=intents)
+# デフォルトのhelpコマンドを無効化（自作するため）
+bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 voice_state_log = {}
 message_tracker = {} 
@@ -107,9 +108,7 @@ async def delete_previous_message(channel, message_id):
 def is_active(voice_state):
     return voice_state.channel is not None and not voice_state.self_deaf
 
-# ▼▼▼ 追加: タイマー設定の共通処理 ▼▼▼
 async def set_personal_timer(message, minutes):
-    # メッセージ削除
     if message.guild:
         try:
             await message.delete()
@@ -161,26 +160,20 @@ async def on_ready():
     if recovered_count > 0:
         print(f"合計 {recovered_count} 名の作業セッションを復旧しました。")
 
-# ▼▼▼ 追加: メッセージ監視（!数字 の検知） ▼▼▼
 @bot.event
 async def on_message(message):
-    # ボット自身の発言は無視
     if message.author.bot:
         return
 
-    # "!数字" のパターンかどうかチェック (例: !10, !30)
-    # message.content[1:] が数字のみで構成されているか
+    # !数字 コマンドの処理
     if message.content.startswith('!') and message.content[1:].isdigit():
         try:
             minutes = int(message.content[1:])
-            # タイマー処理を実行
             await set_personal_timer(message, minutes)
-            # タイマーだった場合はここで終了（他のコマンドとして処理させない）
             return
         except ValueError:
             pass
 
-    # その他のコマンド(!rankなど)を処理するために必要
     await bot.process_commands(message)
 
 @bot.event
@@ -277,7 +270,6 @@ async def on_voice_state_update(member, before, after):
             leave_msg = await text_channel.send(embed=embed)
             message_tracker[member.id]['leave_msg_id'] = leave_msg.id
 
-# 元のコマンドも一応残しておきます（共通関数を呼ぶだけ）
 @bot.command()
 async def timer(ctx, minutes: int = 0):
     await set_personal_timer(ctx.message, minutes)
@@ -342,6 +334,65 @@ async def rank(ctx):
         rank_text += MESSAGES["rank"]["row"].format(icon=icon, name=username, time=time_str)
     
     embed.add_field(name="Top Members", value=rank_text, inline=False)
+    await ctx.send(embed=embed)
+
+# ▼▼▼ 追加: !stats (通算記録) ▼▼▼
+@bot.command()
+async def stats(ctx):
+    user_id = ctx.author.id
+    
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        # 通算合計時間
+        c.execute('''SELECT SUM(duration_seconds) FROM study_logs WHERE user_id = ?''', (user_id,))
+        result = c.fetchone()[0]
+        total_seconds = result if result else 0
+        
+        # 最初の記録日
+        c.execute('''SELECT MIN(created_at) FROM study_logs WHERE user_id = ?''', (user_id,))
+        first_date_str = c.fetchone()[0]
+
+    time_str = format_duration(total_seconds, for_voice=False)
+    
+    if first_date_str:
+        first_date = datetime.fromisoformat(first_date_str)
+        days_since = (datetime.now() - first_date).days
+        date_disp = first_date.strftime('%Y/%m/%d')
+    else:
+        date_disp = "---"
+        days_since = 0
+
+    embed = discord.Embed(
+        title=MESSAGES["stats"]["embed_title"].format(name=ctx.author.display_name),
+        description=MESSAGES["stats"]["embed_desc"],
+        color=MESSAGES["stats"]["embed_color"]
+    )
+    embed.set_thumbnail(url=ctx.author.display_avatar.url)
+    embed.add_field(
+        name=MESSAGES["stats"]["total_label"], 
+        value=MESSAGES["stats"]["total_value"].format(total_time=time_str), 
+        inline=False
+    )
+    embed.add_field(
+        name=MESSAGES["stats"]["first_day_label"], 
+        value=MESSAGES["stats"]["first_day_value"].format(date=date_disp, days=days_since), 
+        inline=False
+    )
+    
+    await ctx.send(embed=embed)
+
+# ▼▼▼ 追加: !help (コマンド一覧) ▼▼▼
+@bot.command()
+async def help(ctx):
+    embed = discord.Embed(
+        title=MESSAGES["help"]["embed_title"],
+        description=MESSAGES["help"]["embed_desc"],
+        color=MESSAGES["help"]["embed_color"]
+    )
+    
+    for cmd_name, cmd_desc in MESSAGES["help"]["commands"]:
+        embed.add_field(name=cmd_name, value=cmd_desc, inline=False)
+    
     await ctx.send(embed=embed)
 
 @bot.command()
