@@ -12,5 +12,6 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.50'     # CPU使用率を最大50%に制限
-          memory: 256M     # メモリ使用量を最大256MBに制限
+          cpus: "0.50" # CPU使用率を最大50%に制限
+          memory: 256M # メモリ使用量を最大256MBに制限
+    init: true

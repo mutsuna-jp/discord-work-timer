@@ -135,4 +135,14 @@ if __name__ == '__main__':
         print("エラー: DISCORD_BOT_TOKEN 環境変数が設定されていません。")
     else:
         bot = WorkTimerBot()
-        bot.run(TOKEN)
+        print("🚀 Botプロセスを開始します...")
+        try:
+            bot.run(TOKEN)
+        except KeyboardInterrupt:
+            print("🛑 KeyboardInterruptを受信しました。終了します。")
+        except SystemExit:
+            print("🛑 SystemExitを受信しました。終了します。")
+        except Exception as e:
+            print(f"🛑 実行中にエラーが発生しました: {e}")
+        finally:
+            print("🏁 プロセスが完全に終了しました。")
