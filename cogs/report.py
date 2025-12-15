@@ -134,16 +134,6 @@ class ReportCog(commands.Cog):
         today_date_str = now.strftime('%Y-%m-%d')
         today_disp_str = now.strftime('%Y/%m/%d')
 
-        # 日報データを取得
-        rows = self.bot.db.execute(
-            '''SELECT user_id, username, SUM(duration_seconds) as total_time 
-               FROM study_logs 
-               WHERE created_at >= ? 
-               GROUP BY user_id 
-               ORDER BY total_time DESC''',
-            (today_start,),
-            fetch_all=True
-        ) # Note: Passed datetime object, sqlite adapter handles it or needs str? Original used str.
         # DB Execute expects str usually for safe comparison
         rows = self.bot.db.execute(
             '''SELECT user_id, username, SUM(duration_seconds) as total_time 

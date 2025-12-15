@@ -30,9 +30,12 @@ class AdminCog(commands.Cog):
         now = datetime.now()
         total_seconds = minutes * 60
         
-        self.bot.db.execute(
-            "INSERT INTO study_logs VALUES (?, ?, ?, ?, ?)",
-            (member.id, member.display_name, now.isoformat(), total_seconds, now.isoformat())
+        self.bot.db.add_study_log(
+            member.id,
+            member.display_name,
+            now,
+            total_seconds,
+            now
         )
         
         new_total = self.bot.db.get_today_seconds(member.id)

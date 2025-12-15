@@ -8,7 +8,6 @@ class StudyCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.voice_state_log = {}
-        self.message_tracker = {}
 
     def is_active(self, voice_state):
         """ユーザーが実際にVCで活動中か判定"""
@@ -44,9 +43,6 @@ class StudyCog(commands.Cog):
         log_channel_id = getattr(self.bot, 'LOG_CHANNEL_ID', 0)
         text_channel = self.bot.get_channel(log_channel_id)
         
-        if member.id not in self.message_tracker:
-            self.message_tracker[member.id] = {}
-
         was_active = self.is_active(before)
         is_active_now = self.is_active(after)
 
@@ -60,8 +56,13 @@ class StudyCog(commands.Cog):
 
     async def handle_voice_join(self, member, after, text_channel):
         """ユーザーがVCに参加した場合の処理"""
+        # DBから以前のメッセージ状態を取得
+        state = self.bot.db.get_message_state(member.id)
+        # state is (join_msg_id, leave_msg_id) or None
+        prev_leave_msg_id = state[1] if state else None
+
         if text_channel:
-            await delete_previous_message(text_channel, self.message_tracker[member.id].get('leave_msg_id'))
+            await delete_previous_message(text_channel, prev_leave_msg_id)
 
         self.voice_state_log[member.id] = datetime.now()
         today_sec = self.bot.db.get_today_seconds(member.id)
@@ -82,7 +83,8 @@ class StudyCog(commands.Cog):
                 inline=False
             )
             join_msg = await text_channel.send(embed=embed)
-            self.message_tracker[member.id]['join_msg_id'] = join_msg.id
+            # DB更新: join_msg_idを設定、leave_msg_idは削除(None)
+            self.bot.db.set_message_state(member.id, join_msg.id, None)
 
         if msg_type == "join":
             speak_text = MESSAGES["join"]["message"].format(name=member.display_name, current_total=time_str_speak)
@@ -93,8 +95,12 @@ class StudyCog(commands.Cog):
 
     async def handle_voice_leave(self, member, after, text_channel):
         """ユーザーがVCを離れた場合の処理"""
+        # DBから以前のメッセージ状態を取得
+        state = self.bot.db.get_message_state(member.id)
+        prev_join_msg_id = state[0] if state else None
+
         if text_channel:
-            await delete_previous_message(text_channel, self.message_tracker[member.id].get('join_msg_id'))
+            await delete_previous_message(text_channel, prev_join_msg_id)
 
         if member.id in self.voice_state_log:
             join_time = self.voice_state_log[member.id]
@@ -102,9 +108,12 @@ class StudyCog(commands.Cog):
             duration = leave_time - join_time
             total_seconds = int(duration.total_seconds())
 
-            self.bot.db.execute(
-                "INSERT INTO study_logs VALUES (?, ?, ?, ?, ?)",
-                (member.id, member.display_name, join_time.isoformat(), total_seconds, leave_time.isoformat())
+            self.bot.db.add_study_log(
+                member.id, 
+                member.display_name, 
+                join_time, 
+                total_seconds, 
+                leave_time
             )
             
             del self.voice_state_log[member.id]
@@ -136,7 +145,8 @@ class StudyCog(commands.Cog):
             )
             
             leave_msg = await text_channel.send(embed=embed)
-            self.message_tracker[member.id]['leave_msg_id'] = leave_msg.id
+            # DB更新: join_msg_idは削除(None)、leave_msg_idを設定
+            self.bot.db.set_message_state(member.id, None, leave_msg.id)
 
 async def setup(bot):
     await bot.add_cog(StudyCog(bot))

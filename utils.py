@@ -66,8 +66,8 @@ async def delete_previous_message(channel, message_id):
     """チャネルの前のメッセージを削除"""
     if message_id:
         try:
-            msg = await channel.fetch_message(message_id)
-            await msg.delete()
+            # fetch_messageを使わず、get_partial_messageで直接削除APIを叩く
+            await channel.get_partial_message(message_id).delete()
         except discord.NotFound:
             pass 
         except Exception as e:

@@ -39,6 +39,8 @@ class Database:
                          (user_id INTEGER, username TEXT, date TEXT, total_seconds INTEGER, PRIMARY KEY(user_id, date))''')
             c.execute('''CREATE TABLE IF NOT EXISTS personal_timers
                          (user_id INTEGER, end_time TEXT, minutes INTEGER)''')
+            c.execute('''CREATE TABLE IF NOT EXISTS study_message_states
+                         (user_id INTEGER PRIMARY KEY, join_msg_id INTEGER, leave_msg_id INTEGER)''')
             
             c.execute('''CREATE INDEX IF NOT EXISTS idx_study_logs_user_created 
                          ON study_logs(user_id, created_at)''')
@@ -62,3 +64,25 @@ class Database:
             fetch_one=True
         )
         return result[0] if result and result[0] else 0
+
+    def get_message_state(self, user_id):
+        """ユーザーのメッセージ状態を取得"""
+        return self.execute(
+            '''SELECT join_msg_id, leave_msg_id FROM study_message_states WHERE user_id = ?''',
+            (user_id,),
+            fetch_one=True
+        )
+
+    def set_message_state(self, user_id, join_msg_id, leave_msg_id):
+        """ユーザーのメッセージ状態を保存 (INSERT OR REPLACE)"""
+        self.execute(
+            '''INSERT OR REPLACE INTO study_message_states (user_id, join_msg_id, leave_msg_id) VALUES (?, ?, ?)''',
+            (user_id, join_msg_id, leave_msg_id)
+        )
+
+    def add_study_log(self, user_id, username, join_time, duration_seconds, leave_time):
+        """学習ログを追加"""
+        self.execute(
+            "INSERT INTO study_logs VALUES (?, ?, ?, ?, ?)",
+            (user_id, username, join_time.isoformat(), duration_seconds, leave_time.isoformat())
+        )
