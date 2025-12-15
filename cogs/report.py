@@ -48,11 +48,8 @@ class ReportCog(commands.Cog):
 
         if not rows:
             msg = MESSAGES.get("rank", {}).get("empty_message", "データがありません")
-            try:
-                await interaction.user.send(msg)
-                await interaction.followup.send("ランキングをDMに送信しました。", ephemeral=True)
-            except discord.Forbidden:
-                await interaction.followup.send("DMを送信できませんでした。設定をご確認ください。", ephemeral=True)
+            # Ephemeral (自分だけに見える) メッセージとして送信
+            await interaction.followup.send(msg, ephemeral=True)
             return
 
         rank_config = MESSAGES.get("rank", {})
@@ -68,12 +65,8 @@ class ReportCog(commands.Cog):
         
         embed.add_field(name="Top Members", value=rank_text, inline=False)
         
-        # DMに送信
-        try:
-            await interaction.user.send(embed=embed)
-            await interaction.followup.send("ランキングをDMに送信しました。", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.followup.send("DMを送信できませんでした。設定をご確認ください。", ephemeral=True)
+        # Ephemeral (自分だけに見える) メッセージとして送信
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="stats", description="あなたの累計作業時間を表示します")
     async def stats(self, interaction: discord.Interaction):
@@ -116,11 +109,8 @@ class ReportCog(commands.Cog):
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         
-        try:
-            await interaction.user.send(embed=embed)
-            await interaction.followup.send("統計情報をDMに送信しました。", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.followup.send("DMを送信できませんでした。設定をご確認ください。", ephemeral=True)
+        # Ephemeral (自分だけに見える) メッセージとして送信
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @tasks.loop(time=time(hour=23, minute=59))
     async def daily_report_task(self):

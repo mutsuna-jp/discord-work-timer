@@ -41,13 +41,8 @@ class TimerCog(commands.Cog):
 
         msg = timer_msgs.get("set", "⏰ {minutes}分後に通知します。").format(minutes=minutes, end_time=end_time_disp)
         
-        # DMに通知を送るか、またはEphemeralで応答する
-        # ここでは「設定しました」という応答を返し、通知は時間経過後にDMで来る仕様を維持
-        try:
-            await interaction.user.send(msg)
-            await interaction.response.send_message("タイマーをセットしました（DMを確認してください）。", ephemeral=True)
-        except discord.Forbidden:
-             await interaction.response.send_message("❌ DMを送信できませんでした。設定を確認してください。\n(タイマーはセットされましたが、通知が届かない可能性があります)", ephemeral=True)
+        # 設定完了メッセージをEphemeralで返す (通知は時間経過後にDMで届く)
+        await interaction.response.send_message(f"{msg}\n(時間が来たらDMでお知らせします)", ephemeral=True)
 
 
     @app_commands.command(name="timer", description="指定した分数のタイマーを設定します")

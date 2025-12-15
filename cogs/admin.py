@@ -23,12 +23,8 @@ class AdminCog(commands.Cog):
             if isinstance(cmd_item, (list, tuple)) and len(cmd_item) >= 2:
                 embed.add_field(name=cmd_item[0], value=cmd_item[1], inline=False)
         
-        # DMに送信
-        try:
-            await interaction.user.send(embed=embed)
-            await interaction.followup.send("ヘルプをDMに送信しました。", ephemeral=True)
-        except discord.Forbidden:
-             await interaction.followup.send("DMを送信できませんでした。設定をご確認ください。", ephemeral=True)
+        # Ephemeral (自分だけに見える) メッセージとして送信
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="add", description="[管理者用] ユーザーの作業時間を追加/削除します")
     @app_commands.describe(member="対象ユーザー", minutes="追加する分数（マイナスで削減）")
