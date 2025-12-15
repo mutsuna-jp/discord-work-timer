@@ -18,13 +18,17 @@ class TimerCog(commands.Cog):
     async def set_personal_timer(self, message, minutes):
         """個人タイマーを設定"""
         await safe_message_delete(message)
+        
+        timer_msgs = MESSAGES.get("timer", {})
 
         if minutes <= 0:
-            await message.author.send(MESSAGES["timer"]["invalid"])
+            msg = timer_msgs.get("invalid", "⚠️ 時間は整数（分）で指定してください。")
+            await message.author.send(msg)
             return
         
         if minutes > TIMER_MAX_MINUTES:
-            await message.author.send(MESSAGES["timer"]["too_long"])
+            msg = timer_msgs.get("too_long", "⚠️ タイマーは長すぎます。")
+            await message.author.send(msg)
             return
 
         end_time = datetime.now() + timedelta(minutes=minutes)
@@ -36,7 +40,8 @@ class TimerCog(commands.Cog):
             (message.author.id, end_time_str, minutes)
         )
 
-        await message.author.send(MESSAGES["timer"]["set"].format(minutes=minutes, end_time=end_time_disp))
+        msg = timer_msgs.get("set", "⏰ {minutes}分後に通知します。").format(minutes=minutes, end_time=end_time_disp)
+        await message.author.send(msg)
 
     @commands.command()
     async def timer(self, ctx, minutes: int = 0):
@@ -71,6 +76,8 @@ class TimerCog(commands.Cog):
         if not expired_timers:
             return
         
+        timer_msgs = MESSAGES.get("timer", {})
+        
         for rowid, user_id, minutes in expired_timers:
             try:
                 user = self.bot.get_user(user_id)
@@ -81,7 +88,8 @@ class TimerCog(commands.Cog):
                         user = None
                 
                 if user:
-                    await user.send(MESSAGES["timer"]["finish"].format(minutes=minutes))
+                    msg = timer_msgs.get("finish", "⏰ {minutes}分が経過しました！").format(minutes=minutes)
+                    await user.send(msg)
             except Exception as e:
                 print(f"タイマー通知エラー (User ID: {user_id}): {e}")
             

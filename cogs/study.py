@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from datetime import datetime
-from utils import format_duration, speak_in_vc, delete_previous_message
+from utils import format_duration, speak_in_vc, delete_previous_message, create_embed_from_config
 from messages import MESSAGES
 
 class StudyCog(commands.Cog):
@@ -72,22 +72,22 @@ class StudyCog(commands.Cog):
         msg_type = "join" if before.channel is None else "resume"
         
         if text_channel:
-            embed = discord.Embed(
-                title=MESSAGES[msg_type]["embed_title"],
-                color=MESSAGES[msg_type]["embed_color"]
+            # 安全にEmbedを生成
+            msg_config = MESSAGES.get(msg_type, {})
+            embed = create_embed_from_config(
+                msg_config,
+                name=member.display_name,
+                current_total=time_str_text
             )
             embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
-            embed.add_field(
-                name=MESSAGES[msg_type]["fields"][0]["name"],
-                value=MESSAGES[msg_type]["fields"][0]["value"].format(current_total=time_str_text),
-                inline=False
-            )
+            
             join_msg = await text_channel.send(embed=embed)
             # DB更新: join_msg_idを設定、leave_msg_idは削除(None)
             self.bot.db.set_message_state(member.id, join_msg.id, None)
 
         if msg_type == "join":
-            speak_text = MESSAGES["join"]["message"].format(name=member.display_name, current_total=time_str_speak)
+            msg_fmt = MESSAGES.get("join", {}).get("message", "{name}さん、が作業を始めました。")
+            speak_text = msg_fmt.format(name=member.display_name, current_total=time_str_speak)
             self.bot.loop.create_task(speak_in_vc(after.channel, speak_text, member.id))
 
     async def handle_voice_leave(self, member, after, text_channel):
@@ -124,22 +124,15 @@ class StudyCog(commands.Cog):
         msg_type = "leave" if after.channel is None else "break"
 
         if text_channel:
-            embed = discord.Embed(
-                title=MESSAGES[msg_type]["embed_title"],
-                color=MESSAGES[msg_type]["embed_color"]
+            # 安全にEmbedを生成
+            msg_config = MESSAGES.get(msg_type, {})
+            embed = create_embed_from_config(
+                msg_config,
+                name=member.display_name,
+                time=current_str,
+                total=total_str
             )
             embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
-            
-            embed.add_field(
-                name=MESSAGES[msg_type]["fields"][0]["name"],
-                value=MESSAGES[msg_type]["fields"][0]["value"].format(time=current_str),
-                inline=False
-            )
-            embed.add_field(
-                name=MESSAGES[msg_type]["fields"][1]["name"],
-                value=MESSAGES[msg_type]["fields"][1]["value"].format(total=total_str),
-                inline=False
-            )
             
             leave_msg = await text_channel.send(embed=embed)
             # DB更新: join_msg_idは削除(None)、leave_msg_idを設定

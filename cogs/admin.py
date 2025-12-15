@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from datetime import datetime
-from utils import safe_message_delete, format_duration
+from utils import safe_message_delete, format_duration, create_embed_from_config
 from messages import MESSAGES
 
 class AdminCog(commands.Cog):
@@ -13,14 +13,13 @@ class AdminCog(commands.Cog):
         """ヘルプを表示"""
         await safe_message_delete(ctx.message)
 
-        embed = discord.Embed(
-            title=MESSAGES["help"]["embed_title"],
-            description=MESSAGES["help"]["embed_desc"],
-            color=MESSAGES["help"]["embed_color"]
-        )
+        help_config = MESSAGES.get("help", {})
+        embed = create_embed_from_config(help_config)
         
-        for cmd_name, cmd_desc in MESSAGES["help"]["commands"]:
-            embed.add_field(name=cmd_name, value=cmd_desc, inline=False)
+        commands_list = help_config.get("commands", [])
+        for cmd_item in commands_list:
+            if isinstance(cmd_item, (list, tuple)) and len(cmd_item) >= 2:
+                embed.add_field(name=cmd_item[0], value=cmd_item[1], inline=False)
         
         await ctx.author.send(embed=embed)
 

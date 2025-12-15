@@ -72,3 +72,45 @@ async def delete_previous_message(channel, message_id):
             pass 
         except Exception as e:
             print(f"メッセージ削除エラー: {e}")
+
+def create_embed_from_config(config, **kwargs):
+    """設定辞書からEmbedを安全に生成"""
+    title = config.get("embed_title", "")
+    if title:
+        try:
+            title = title.format(**kwargs)
+        except Exception:
+            pass
+
+    desc = config.get("embed_description") or config.get("embed_desc", "")
+    if desc:
+        try:
+            desc = desc.format(**kwargs)
+        except Exception:
+            pass
+
+    color = config.get("embed_color", 0x808080)
+
+    embed = discord.Embed(title=title, description=desc, color=color)
+    
+    # 共通フィールド設定がある場合
+    if "fields" in config and isinstance(config["fields"], list):
+        for field in config["fields"]:
+            name = field.get("name", "")
+            value = field.get("value", "")
+            inline = field.get("inline", False)
+            
+            try:
+                name = name.format(**kwargs)
+            except Exception:
+                pass
+            
+            try:
+                value = value.format(**kwargs)
+            except Exception:
+                pass
+                
+            if name and value:
+                embed.add_field(name=name, value=value, inline=inline)
+    
+    return embed

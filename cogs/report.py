@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands, tasks
 from datetime import datetime, timedelta, time
 import os
-from utils import format_duration, delete_previous_message, safe_message_delete
+from utils import format_duration, delete_previous_message, safe_message_delete, create_embed_from_config
 from messages import MESSAGES
 
 class ReportCog(commands.Cog):
@@ -44,20 +44,20 @@ class ReportCog(commands.Cog):
         )
 
         if not rows:
-            await ctx.send(MESSAGES["rank"]["empty_message"])
+            msg = MESSAGES.get("rank", {}).get("empty_message", "データがありません")
+            await ctx.send(msg)
             return
 
-        embed = discord.Embed(
-            title=MESSAGES["rank"]["embed_title"],
-            description=MESSAGES["rank"]["embed_desc"],
-            color=MESSAGES["rank"]["embed_color"]
-        )
+        rank_config = MESSAGES.get("rank", {})
+        embed = create_embed_from_config(rank_config)
         
         rank_text = ""
+        row_fmt = rank_config.get("row", "{icon} **{name}**: {time}\n")
+        
         for i, (username, total_seconds) in enumerate(rows, 1):
             time_str = format_duration(total_seconds, for_voice=True)
             icon = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-            rank_text += MESSAGES["rank"]["row"].format(icon=icon, name=username, time=time_str)
+            rank_text += row_fmt.format(icon=icon, name=username, time=time_str)
         
         embed.add_field(name="Top Members", value=rank_text, inline=False)
         
@@ -103,22 +103,15 @@ class ReportCog(commands.Cog):
             date_disp = "---"
             days_since = 0
 
-        embed = discord.Embed(
-            title=MESSAGES["stats"]["embed_title"].format(name=ctx.author.display_name),
-            description=MESSAGES["stats"]["embed_desc"],
-            color=MESSAGES["stats"]["embed_color"]
+        stats_config = MESSAGES.get("stats", {})
+        embed = create_embed_from_config(
+            stats_config,
+            name=ctx.author.display_name,
+            total_time=time_str,
+            date=date_disp,
+            days=days_since
         )
         embed.set_thumbnail(url=ctx.author.display_avatar.url)
-        embed.add_field(
-            name=MESSAGES["stats"]["fields"][0]["name"], 
-            value=MESSAGES["stats"]["fields"][0]["value"].format(total_time=time_str), 
-            inline=False
-        )
-        embed.add_field(
-            name=MESSAGES["stats"]["fields"][1]["name"], 
-            value=MESSAGES["stats"]["fields"][1]["value"].format(date=date_disp, days=days_since), 
-            inline=False
-        )
         
         await ctx.author.send(embed=embed)
 
@@ -147,17 +140,21 @@ class ReportCog(commands.Cog):
 
         if channel:
             if not rows:
-                await channel.send(MESSAGES["report"]["empty_message"])
+                msg = MESSAGES.get("report", {}).get("empty_message", "本日の作業はありませんでした。")
+                await channel.send(msg)
             else:
-                embed = discord.Embed(
-                    title=MESSAGES["report"]["embed_title"].format(date=today_disp_str),
-                    description=MESSAGES["report"]["embed_desc"],
-                    color=MESSAGES["report"]["embed_color"]
+                report_config = MESSAGES.get("report", {})
+                embed = create_embed_from_config(
+                    report_config,
+                    date=today_disp_str
                 )
+                
                 report_text = ""
+                row_fmt = report_config.get("row", "• **{name}**: {time}\n")
+                
                 for _, username, total_seconds in rows:
                     time_str = format_duration(total_seconds, for_voice=True)
-                    report_text += MESSAGES["report"]["row"].format(name=username, time=time_str)
+                    report_text += row_fmt.format(name=username, time=time_str)
                 
                 embed.add_field(name="Results", value=report_text, inline=False)
                 await channel.send(embed=embed)
