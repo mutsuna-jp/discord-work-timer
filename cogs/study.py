@@ -88,10 +88,7 @@ class StudyCog(commands.Cog):
 
         if msg_type == "join":
             speak_text = MESSAGES["join"]["message"].format(name=member.display_name, current_total=time_str_speak)
-        else:
-            speak_text = MESSAGES["resume"]["message"].format(name=member.display_name)
-            
-        self.bot.loop.create_task(speak_in_vc(after.channel, speak_text, member.id))
+            self.bot.loop.create_task(speak_in_vc(after.channel, speak_text, member.id))
 
     async def handle_voice_leave(self, member, after, text_channel):
         """ユーザーがVCを離れた場合の処理"""
