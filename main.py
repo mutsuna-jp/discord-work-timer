@@ -2,6 +2,8 @@ import discord
 from discord.ext import commands
 import os
 import asyncio
+import signal
+import sys
 from dotenv import load_dotenv
 from database import Database
 
@@ -135,11 +137,25 @@ if __name__ == '__main__':
         print("エラー: DISCORD_BOT_TOKEN 環境変数が設定されていません。")
     else:
         bot = WorkTimerBot()
+
+        # ▼▼▼ 追加: 停止シグナルを強制的にキャッチする処理 ▼▼▼
+        def force_close(signum, frame):
+            print(f"🛑 停止シグナル ({signum}) を受信しました。終了処理を強制実行します。")
+            # KeyboardInterruptを発生させることで、下の except ブロックに飛ばし、
+            # discord.py の終了処理フローに乗せます。
+            raise KeyboardInterrupt
+
+        # SIGTERM (Docker停止コマンド) をキャッチするように登録
+        signal.signal(signal.SIGTERM, force_close)
+        # ▲▲▲ 追加終了 ▲▲▲
+
         print("🚀 Botプロセスを開始します...")
         try:
             bot.run(TOKEN)
         except KeyboardInterrupt:
-            print("🛑 KeyboardInterruptを受信しました。終了します。")
+            print("🛑 KeyboardInterruptを受信しました。終了処理へ移行します。")
+            # bot.run() は KeyboardInterrupt で抜けると自動的に cleanup を行いますが、
+            # 念のためここで明示的な close は不要です（二重実行になるため）
         except SystemExit:
             print("🛑 SystemExitを受信しました。終了します。")
         except Exception as e:
