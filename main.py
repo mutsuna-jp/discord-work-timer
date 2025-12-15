@@ -5,13 +5,13 @@ import sqlite3
 from datetime import datetime, timedelta, time
 import asyncio
 import edge_tts
-# メッセージ定義ファイルをインポート
 from messages import MESSAGES 
 
 # 環境変数
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', 0))
 SUMMARY_CHANNEL_ID = int(os.getenv('SUMMARY_CHANNEL_ID', 0))
+BACKUP_CHANNEL_ID = int(os.getenv('BACKUP_CHANNEL_ID', 0)) # 追加
 KEEP_LOG_DAYS = 30 
 VOICE_NAME = "ja-JP-NanamiNeural"
 
@@ -52,13 +52,11 @@ def format_duration(total_seconds, for_voice=False):
     seconds = total_seconds % 60
     
     if for_voice:
-        # 音声用: 短く（0時間の時は言わない）
         if hours > 0:
             return f"{hours}時間{minutes}分"
         else:
             return f"{minutes}分"
     else:
-        # テキスト用: 秒まで
         return f"{hours}時間 {minutes}分 {seconds}秒"
 
 async def generate_voice(text, output_path='voice.mp3'):
@@ -104,16 +102,24 @@ async def on_voice_state_update(member, before, after):
         voice_state_log[member.id] = datetime.now()
         today_sec = get_today_seconds(member.id)
         
-        # テキスト通知
+        # Embedで通知
         time_str_text = format_duration(today_sec, for_voice=False)
         if text_channel:
-            msg = MESSAGES["join_text"].format(name=member.display_name, current_total=time_str_text)
-            await text_channel.send(msg)
+            embed = discord.Embed(
+                title=MESSAGES["join"]["embed_title"],
+                color=MESSAGES["join"]["embed_color"]
+            )
+            embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
+            embed.add_field(
+                name=MESSAGES["join"]["field_name"],
+                value=MESSAGES["join"]["field_value"].format(current_total=time_str_text),
+                inline=False
+            )
+            await text_channel.send(embed=embed)
 
         # 音声読み上げ
         time_str_speak = format_duration(today_sec, for_voice=True)
-        speak_text = MESSAGES["join_voice"].format(name=member.display_name, current_total=time_str_speak)
-        
+        speak_text = MESSAGES["join"]["voice"].format(name=member.display_name, current_total=time_str_speak)
         asyncio.create_task(speak_in_vc(after.channel, speak_text))
 
     # 2. 退室検知
@@ -136,12 +142,14 @@ async def on_voice_state_update(member, before, after):
             total_str = format_duration(today_sec, for_voice=False)
             
             if text_channel:
-                msg = MESSAGES["leave_text"].format(
-                    name=member.display_name,
-                    duration=current_str,
-                    daily_total=total_str
+                embed = discord.Embed(
+                    title=MESSAGES["leave"]["embed_title"],
+                    color=MESSAGES["leave"]["embed_color"]
                 )
-                await text_channel.send(msg)
+                embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
+                embed.add_field(name=MESSAGES["leave"]["field1_name"], value=f"**{current_str}**", inline=False)
+                embed.add_field(name=MESSAGES["leave"]["field2_name"], value=f"**{total_str}**", inline=False)
+                await text_channel.send(embed=embed)
             
             del voice_state_log[member.id]
 
@@ -166,19 +174,28 @@ async def rank(ctx):
     conn.close()
 
     if not rows:
-        await ctx.send(MESSAGES["rank_empty"])
+        await ctx.send(MESSAGES["rank"]["empty"])
         return
 
-    msg = MESSAGES["rank_header"]
+    # Embed作成
+    embed = discord.Embed(
+        title=MESSAGES["rank"]["embed_title"],
+        description=MESSAGES["rank"]["embed_desc"],
+        color=MESSAGES["rank"]["embed_color"]
+    )
+    
+    rank_text = ""
     for i, (username, total_seconds) in enumerate(rows, 1):
-        time_str = format_duration(total_seconds, for_voice=True) # ランキングは短め表記で
+        time_str = format_duration(total_seconds, for_voice=True)
         icon = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-        msg += MESSAGES["rank_row"].format(icon=icon, name=username, time=time_str)
-
-    await ctx.send(msg)
+        rank_text += MESSAGES["rank"]["row"].format(icon=icon, name=username, time=time_str)
+    
+    embed.add_field(name="Top Members", value=rank_text, inline=False)
+    await ctx.send(embed=embed)
 
 @tasks.loop(time=time(hour=23, minute=59))
 async def daily_report_task():
+    # 1. 日報送信
     channel = bot.get_channel(SUMMARY_CHANNEL_ID)
     now = datetime.now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -193,15 +210,22 @@ async def daily_report_task():
 
     if channel:
         if not rows:
-             await channel.send(MESSAGES["report_empty"])
+             await channel.send(MESSAGES["report"]["empty"])
         else:
-            msg = MESSAGES["report_header"].format(date=today_disp_str)
+            embed = discord.Embed(
+                title=MESSAGES["report"]["embed_title"].format(date=today_disp_str),
+                description=MESSAGES["report"]["embed_desc"],
+                color=MESSAGES["report"]["embed_color"]
+            )
+            report_text = ""
             for _, username, total_seconds in rows:
                 time_str = format_duration(total_seconds, for_voice=True)
-                msg += MESSAGES["report_row"].format(name=username, time=time_str)
-            await channel.send(msg)
+                report_text += MESSAGES["report"]["row"].format(name=username, time=time_str)
+            
+            embed.add_field(name="Results", value=report_text, inline=False)
+            await channel.send(embed=embed)
     
-    # データ保存とクリーンアップ（変更なし）
+    # データ保存とクリーンアップ
     if rows:
         for user_id, username, total_seconds in rows:
             c.execute('''INSERT OR REPLACE INTO daily_summary (user_id, username, date, total_seconds) VALUES (?, ?, ?, ?)''', (user_id, username, today_date_str, total_seconds))
@@ -214,4 +238,14 @@ async def daily_report_task():
     conn.commit()
     conn.close()
 
-bot.run(TOKEN)
+    # ▼▼▼ 追加機能: データベースのバックアップ送信 ▼▼▼
+    backup_channel = bot.get_channel(BACKUP_CHANNEL_ID)
+    if backup_channel and os.path.exists(DB_PATH):
+        try:
+            # 今日の日付をファイル名につける
+            backup_filename = f"backup_{today_date_str}.db"
+            file = discord.File(DB_PATH, filename=backup_filename)
+            await backup_channel.send(f"🔒 **データベース自動バックアップ** ({today_disp_str})", file=file)
+            print("バックアップ送信完了")
+        except Exception as e:
+            print(f"バックアップ送信エラー: {e}")
