@@ -39,7 +39,7 @@ class WorkTimerBot(commands.Bot):
 
     async def setup_hook(self):
         """起動時の初期化処理"""
-        self.db.setup()
+        await self.db.setup()
         
         # Extension(Cog)の読み込み
         initial_extensions = [
@@ -55,6 +55,15 @@ class WorkTimerBot(commands.Bot):
                 print(f'Loaded extension: {extension}')
             except Exception as e:
                 print(f'Failed to load extension {extension}: {e}')
+        
+        # コマンドツリーの同期 (グローバル)
+        # 注意: グローバル同期は反映に時間がかかる場合があります (最大1時間)
+        # 開発中は特定のギルドIDを指定して同期することを推奨します: await self.tree.sync(guild=discord.Object(id=AssumingURL_GUILD_ID))
+        try:
+            synced = await self.tree.sync()
+            print(f'Synced {len(synced)} command(s) globally.')
+        except Exception as e:
+            print(f'Failed to sync commands: {e}')
 
     async def on_ready(self):
         print(f'ログインしました: {self.user}')

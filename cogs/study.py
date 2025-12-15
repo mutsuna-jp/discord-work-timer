@@ -57,7 +57,7 @@ class StudyCog(commands.Cog):
     async def handle_voice_join(self, member, before, after, text_channel):
         """ユーザーがVCに参加した場合の処理"""
         # DBから以前のメッセージ状態を取得
-        state = self.bot.db.get_message_state(member.id)
+        state = await self.bot.db.get_message_state(member.id)
         # state is (join_msg_id, leave_msg_id) or None
         prev_leave_msg_id = state[1] if state else None
 
@@ -65,7 +65,7 @@ class StudyCog(commands.Cog):
             await delete_previous_message(text_channel, prev_leave_msg_id)
 
         self.voice_state_log[member.id] = datetime.now()
-        today_sec = self.bot.db.get_today_seconds(member.id)
+        today_sec = await self.bot.db.get_today_seconds(member.id)
         time_str_text = format_duration(today_sec, for_voice=False)
         time_str_speak = format_duration(today_sec, for_voice=True)
 
@@ -83,7 +83,7 @@ class StudyCog(commands.Cog):
             
             join_msg = await text_channel.send(embed=embed)
             # DB更新: join_msg_idを設定、leave_msg_idは削除(None)
-            self.bot.db.set_message_state(member.id, join_msg.id, None)
+            await self.bot.db.set_message_state(member.id, join_msg.id, None)
 
         if msg_type == "join":
             msg_fmt = MESSAGES.get("join", {}).get("message", "{name}さん、が作業を始めました。")
@@ -93,7 +93,7 @@ class StudyCog(commands.Cog):
     async def handle_voice_leave(self, member, after, text_channel):
         """ユーザーがVCを離れた場合の処理"""
         # DBから以前のメッセージ状態を取得
-        state = self.bot.db.get_message_state(member.id)
+        state = await self.bot.db.get_message_state(member.id)
         prev_join_msg_id = state[0] if state else None
 
         if text_channel:
@@ -105,7 +105,7 @@ class StudyCog(commands.Cog):
             duration = leave_time - join_time
             total_seconds = int(duration.total_seconds())
 
-            self.bot.db.add_study_log(
+            await self.bot.db.add_study_log(
                 member.id, 
                 member.display_name, 
                 join_time, 
@@ -118,7 +118,7 @@ class StudyCog(commands.Cog):
             total_seconds = 0
 
         current_str = format_duration(total_seconds, for_voice=False)
-        today_sec = self.bot.db.get_today_seconds(member.id)
+        today_sec = await self.bot.db.get_today_seconds(member.id)
         total_str = format_duration(today_sec, for_voice=False)
         
         msg_type = "leave" if after.channel is None else "break"
@@ -136,7 +136,7 @@ class StudyCog(commands.Cog):
             
             leave_msg = await text_channel.send(embed=embed)
             # DB更新: join_msg_idは削除(None)、leave_msg_idを設定
-            self.bot.db.set_message_state(member.id, None, leave_msg.id)
+            await self.bot.db.set_message_state(member.id, None, leave_msg.id)
 
 async def setup(bot):
     await bot.add_cog(StudyCog(bot))

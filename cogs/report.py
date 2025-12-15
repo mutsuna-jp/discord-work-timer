@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands, tasks
+from discord import app_commands
 from datetime import datetime, timedelta, time
 import os
 from utils import format_duration, delete_previous_message, safe_message_delete, create_embed_from_config
@@ -23,17 +24,18 @@ class ReportCog(commands.Cog):
     def cog_unload(self):
         self.daily_report_task.cancel()
 
-    @commands.command()
-    async def rank(self, ctx):
+    @app_commands.command(name="rank", description="週間ランキングを表示します")
+    async def rank(self, interaction: discord.Interaction):
         """週間ランキングを表示"""
-        await safe_message_delete(ctx.message)
+        # インタラクションへの応答はこれで行う（DM送信するので、ここではEphemeralな応答をする）
+        await interaction.response.defer(ephemeral=True)
         
         now = datetime.now()
         monday = now - timedelta(days=now.weekday())
         monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
         monday_str = monday.isoformat()
 
-        rows = self.bot.db.execute(
+        rows = await self.bot.db.execute(
             '''SELECT username, SUM(duration_seconds) as total_time
                FROM study_logs
                WHERE created_at >= ?
@@ -47,9 +49,10 @@ class ReportCog(commands.Cog):
         if not rows:
             msg = MESSAGES.get("rank", {}).get("empty_message", "データがありません")
             try:
-                await ctx.author.send(msg)
+                await interaction.user.send(msg)
+                await interaction.followup.send("ランキングをDMに送信しました。", ephemeral=True)
             except discord.Forbidden:
-                await ctx.send(f"{ctx.author.mention} DMを送信できませんでした。設定をご確認ください。", delete_after=10)
+                await interaction.followup.send("DMを送信できませんでした。設定をご確認ください。", ephemeral=True)
             return
 
         rank_config = MESSAGES.get("rank", {})
@@ -67,25 +70,26 @@ class ReportCog(commands.Cog):
         
         # DMに送信
         try:
-            await ctx.author.send(embed=embed)
+            await interaction.user.send(embed=embed)
+            await interaction.followup.send("ランキングをDMに送信しました。", ephemeral=True)
         except discord.Forbidden:
-            await ctx.send(f"{ctx.author.mention} DMを送信できませんでした。設定をご確認ください。", delete_after=10)
+            await interaction.followup.send("DMを送信できませんでした。設定をご確認ください。", ephemeral=True)
 
-    @commands.command()
-    async def stats(self, ctx):
+    @app_commands.command(name="stats", description="あなたの累計作業時間を表示します")
+    async def stats(self, interaction: discord.Interaction):
         """個別統計を表示"""
-        await safe_message_delete(ctx.message)
+        await interaction.response.defer(ephemeral=True)
 
-        user_id = ctx.author.id
+        user_id = interaction.user.id
         
-        total_result = self.bot.db.execute(
+        total_result = await self.bot.db.execute(
             '''SELECT SUM(duration_seconds) FROM study_logs WHERE user_id = ?''',
             (user_id,),
             fetch_one=True
         )
         total_seconds = total_result[0] if total_result and total_result[0] else 0
         
-        first_date_result = self.bot.db.execute(
+        first_date_result = await self.bot.db.execute(
             '''SELECT MIN(created_at) FROM study_logs WHERE user_id = ?''',
             (user_id,),
             fetch_one=True
@@ -105,14 +109,18 @@ class ReportCog(commands.Cog):
         stats_config = MESSAGES.get("stats", {})
         embed = create_embed_from_config(
             stats_config,
-            name=ctx.author.display_name,
+            name=interaction.user.display_name,
             total_time=time_str,
             date=date_disp,
             days=days_since
         )
-        embed.set_thumbnail(url=ctx.author.display_avatar.url)
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
         
-        await ctx.author.send(embed=embed)
+        try:
+            await interaction.user.send(embed=embed)
+            await interaction.followup.send("統計情報をDMに送信しました。", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send("DMを送信できませんでした。設定をご確認ください。", ephemeral=True)
 
     @tasks.loop(time=time(hour=23, minute=59))
     async def daily_report_task(self):
@@ -127,7 +135,7 @@ class ReportCog(commands.Cog):
         today_disp_str = now.strftime('%Y/%m/%d')
 
         # DB Execute expects str usually for safe comparison
-        rows = self.bot.db.execute(
+        rows = await self.bot.db.execute(
             '''SELECT user_id, username, SUM(duration_seconds) as total_time 
                FROM study_logs 
                WHERE created_at >= ? 
@@ -164,12 +172,12 @@ class ReportCog(commands.Cog):
         db_size_mb = 0
         
         # Custom DB logic for batch operation
-        with self.bot.db.get_connection() as conn:
-            c = conn.cursor()
+        # Custom DB logic for batch operation
+        async with self.bot.db.get_connection() as db:
             
             if rows:
                 for user_id, username, total_seconds in rows:
-                    c.execute(
+                    await db.execute(
                         '''INSERT OR REPLACE INTO daily_summary (user_id, username, date, total_seconds) 
                            VALUES (?, ?, ?, ?)''',
                         (user_id, username, today_date_str, total_seconds)
@@ -178,17 +186,17 @@ class ReportCog(commands.Cog):
             # 古いDaily Summaryデータを削除
             cleanup_summary_threshold = now - timedelta(days=365)
             cleanup_summary_threshold_str = cleanup_summary_threshold.strftime('%Y-%m-%d')
-            c.execute("DELETE FROM daily_summary WHERE date < ?", (cleanup_summary_threshold_str,))
-            summary_deleted = c.rowcount
+            cursor = await db.execute("DELETE FROM daily_summary WHERE date < ?", (cleanup_summary_threshold_str,))
+            summary_deleted = cursor.rowcount
             
             # 古いログを削除
             cleanup_threshold = now - timedelta(days=self.keep_log_days)
-            c.execute("DELETE FROM study_logs WHERE created_at < ?", (cleanup_threshold.isoformat(),))
-            logs_deleted = c.rowcount
+            cursor = await db.execute("DELETE FROM study_logs WHERE created_at < ?", (cleanup_threshold.isoformat(),))
+            logs_deleted = cursor.rowcount
             
             # VACUUM を実行
-            c.execute("VACUUM")
-            conn.commit()
+            await db.execute("VACUUM")
+            await db.commit()
             
             # データベースサイズを監視
             db_path = self.bot.db.db_path

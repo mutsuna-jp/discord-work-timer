@@ -1,4 +1,4 @@
-import sqlite3
+import aiosqlite
 import os
 from datetime import datetime
 
@@ -7,82 +7,80 @@ class Database:
         self.db_path = db_path
 
     def get_connection(self):
-        return sqlite3.connect(self.db_path)
+        return aiosqlite.connect(self.db_path)
 
-    def execute(self, query, params=None, fetch_one=False, fetch_all=False):
+    async def execute(self, query, params=None, fetch_one=False, fetch_all=False):
         try:
-            with self.get_connection() as conn:
-                c = conn.cursor()
+            async with self.get_connection() as db:
                 if params:
-                    c.execute(query, params)
+                    cursor = await db.execute(query, params)
                 else:
-                    c.execute(query)
+                    cursor = await db.execute(query)
                 
                 if fetch_one:
-                    return c.fetchone()
+                    return await cursor.fetchone()
                 elif fetch_all:
-                    return c.fetchall()
+                    return await cursor.fetchall()
                 else:
-                    conn.commit()
+                    await db.commit()
                     return None
         except Exception as e:
             print(f"データベースエラー: {e}")
             return None
 
-    def setup(self):
+    async def setup(self):
         """データベーステーブルとインデックスの初期化"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('''CREATE TABLE IF NOT EXISTS study_logs
+        async with self.get_connection() as db:
+            await db.execute('''CREATE TABLE IF NOT EXISTS study_logs
                          (user_id INTEGER, username TEXT, start_time TEXT, duration_seconds INTEGER, created_at TEXT)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS daily_summary
+            await db.execute('''CREATE TABLE IF NOT EXISTS daily_summary
                          (user_id INTEGER, username TEXT, date TEXT, total_seconds INTEGER, PRIMARY KEY(user_id, date))''')
-            c.execute('''CREATE TABLE IF NOT EXISTS personal_timers
+            await db.execute('''CREATE TABLE IF NOT EXISTS personal_timers
                          (user_id INTEGER, end_time TEXT, minutes INTEGER)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS study_message_states
+            await db.execute('''CREATE TABLE IF NOT EXISTS study_message_states
                          (user_id INTEGER PRIMARY KEY, join_msg_id INTEGER, leave_msg_id INTEGER)''')
             
-            c.execute('''CREATE INDEX IF NOT EXISTS idx_study_logs_user_created 
+            await db.execute('''CREATE INDEX IF NOT EXISTS idx_study_logs_user_created 
                          ON study_logs(user_id, created_at)''')
-            c.execute('''CREATE INDEX IF NOT EXISTS idx_study_logs_created 
+            await db.execute('''CREATE INDEX IF NOT EXISTS idx_study_logs_created 
                          ON study_logs(created_at)''')
-            c.execute('''CREATE INDEX IF NOT EXISTS idx_personal_timers_end_time 
+            await db.execute('''CREATE INDEX IF NOT EXISTS idx_personal_timers_end_time 
                          ON personal_timers(end_time)''')
-            c.execute('''CREATE INDEX IF NOT EXISTS idx_daily_summary_date 
+            await db.execute('''CREATE INDEX IF NOT EXISTS idx_daily_summary_date 
                          ON daily_summary(date)''')
-            conn.commit()
+            await db.commit()
 
-    def get_today_seconds(self, user_id):
+    async def get_today_seconds(self, user_id):
         """ユーザーの本日の作業時間を取得"""
         now = datetime.now()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_str = today_start.isoformat()
         
-        result = self.execute(
+        result = await self.execute(
             '''SELECT SUM(duration_seconds) FROM study_logs WHERE user_id = ? AND created_at >= ?''',
             (user_id, today_str),
             fetch_one=True
         )
         return result[0] if result and result[0] else 0
 
-    def get_message_state(self, user_id):
+    async def get_message_state(self, user_id):
         """ユーザーのメッセージ状態を取得"""
-        return self.execute(
+        return await self.execute(
             '''SELECT join_msg_id, leave_msg_id FROM study_message_states WHERE user_id = ?''',
             (user_id,),
             fetch_one=True
         )
 
-    def set_message_state(self, user_id, join_msg_id, leave_msg_id):
+    async def set_message_state(self, user_id, join_msg_id, leave_msg_id):
         """ユーザーのメッセージ状態を保存 (INSERT OR REPLACE)"""
-        self.execute(
+        await self.execute(
             '''INSERT OR REPLACE INTO study_message_states (user_id, join_msg_id, leave_msg_id) VALUES (?, ?, ?)''',
             (user_id, join_msg_id, leave_msg_id)
         )
 
-    def add_study_log(self, user_id, username, join_time, duration_seconds, leave_time):
+    async def add_study_log(self, user_id, username, join_time, duration_seconds, leave_time):
         """学習ログを追加"""
-        self.execute(
+        await self.execute(
             "INSERT INTO study_logs VALUES (?, ?, ?, ?, ?)",
             (user_id, username, join_time.isoformat(), duration_seconds, leave_time.isoformat())
         )

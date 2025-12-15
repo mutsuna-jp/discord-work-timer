@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 from datetime import datetime
 from utils import safe_message_delete, format_duration, create_embed_from_config
 from messages import MESSAGES
@@ -8,10 +9,11 @@ class AdminCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command()
-    async def help(self, ctx):
+    @app_commands.command(name="help", description="Botの使い方を表示します")
+    async def help(self, interaction: discord.Interaction):
         """ヘルプを表示"""
-        await safe_message_delete(ctx.message)
+        # await safe_message_delete(ctx.message) <- インタラクションなので削除不要
+        await interaction.response.defer(ephemeral=True)
 
         help_config = MESSAGES.get("help", {})
         embed = create_embed_from_config(help_config)
@@ -21,21 +23,24 @@ class AdminCog(commands.Cog):
             if isinstance(cmd_item, (list, tuple)) and len(cmd_item) >= 2:
                 embed.add_field(name=cmd_item[0], value=cmd_item[1], inline=False)
         
-        # 権限チェックと通知
-        if ctx.guild:
-            perms = ctx.channel.permissions_for(ctx.guild.me)
-            if not perms.manage_messages:
-                embed.set_footer(text="⚠️ 注意: Botに「メッセージの管理」権限がないため、コマンド(!help)を自動削除できませんでした。")
+        # DMに送信
+        try:
+            await interaction.user.send(embed=embed)
+            await interaction.followup.send("ヘルプをDMに送信しました。", ephemeral=True)
+        except discord.Forbidden:
+             await interaction.followup.send("DMを送信できませんでした。設定をご確認ください。", ephemeral=True)
 
-        await ctx.author.send(embed=embed)
-
-    @commands.command()
-    async def add(self, ctx, member: discord.Member, minutes: int):
+    @app_commands.command(name="add", description="[管理者用] ユーザーの作業時間を追加/削除します")
+    @app_commands.describe(member="対象ユーザー", minutes="追加する分数（マイナスで削減）")
+    @app_commands.default_permissions(administrator=True) 
+    async def add(self, interaction: discord.Interaction, member: discord.Member, minutes: int):
         """ユーザーの作業時間を追加・削除"""
+        await interaction.response.defer()
+
         now = datetime.now()
         total_seconds = minutes * 60
         
-        self.bot.db.add_study_log(
+        await self.bot.db.add_study_log(
             member.id,
             member.display_name,
             now,
@@ -43,11 +48,11 @@ class AdminCog(commands.Cog):
             now
         )
         
-        new_total = self.bot.db.get_today_seconds(member.id)
+        new_total = await self.bot.db.get_today_seconds(member.id)
         time_str = format_duration(new_total)
         
         action = "追加" if minutes > 0 else "削除"
-        await ctx.send(f"✅ **{member.display_name}** さんの時間を {abs(minutes)}分 {action}しました。\n今日の合計: **{time_str}**")
+        await interaction.followup.send(f"✅ **{member.display_name}** さんの時間を {abs(minutes)}分 {action}しました。\n今日の合計: **{time_str}**")
 
 async def setup(bot):
     await bot.add_cog(AdminCog(bot))
