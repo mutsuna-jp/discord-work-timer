@@ -9,6 +9,15 @@ class Database:
     def get_connection(self):
         return aiosqlite.connect(self.db_path)
 
+    async def execute_script(self, script):
+        """複数のSQLを一括実行（VACUUMなどに使用）"""
+        try:
+            async with self.get_connection() as db:
+                await db.executescript(script)
+                await db.commit()
+        except Exception as e:
+            print(f"データベーススクリプト実行エラー: {e}")
+
     async def execute(self, query, params=None, fetch_one=False, fetch_all=False):
         try:
             async with self.get_connection() as db:
@@ -23,9 +32,11 @@ class Database:
                     return await cursor.fetchall()
                 else:
                     await db.commit()
-                    return None
+                    return cursor.rowcount
         except Exception as e:
             print(f"データベースエラー: {e}")
+            if fetch_all:
+                return []
             return None
 
     async def setup(self):

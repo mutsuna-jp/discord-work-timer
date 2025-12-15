@@ -2,7 +2,11 @@ import discord
 from discord.ext import commands
 import os
 import asyncio
+from dotenv import load_dotenv
 from database import Database
+
+# .env ファイルをロード (ローカル開発用)
+load_dotenv()
 
 # 環境変数
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
@@ -56,12 +60,19 @@ class WorkTimerBot(commands.Bot):
             except Exception as e:
                 print(f'Failed to load extension {extension}: {e}')
         
-        # コマンドツリーの同期 (グローバル)
+        # コマンドツリーの同期
         # 注意: グローバル同期は反映に時間がかかる場合があります (最大1時間)
-        # 開発中は特定のギルドIDを指定して同期することを推奨します: await self.tree.sync(guild=discord.Object(id=AssumingURL_GUILD_ID))
+        # 環境変数 GUILD_ID が設定されている場合は、特定のギルドのみ即時同期します
+        guild_id = os.getenv('GUILD_ID')
         try:
-            synced = await self.tree.sync()
-            print(f'Synced {len(synced)} command(s) globally.')
+            if guild_id:
+                guild = discord.Object(id=int(guild_id))
+                self.tree.copy_global_to(guild=guild)
+                synced = await self.tree.sync(guild=guild)
+                print(f'Synced {len(synced)} command(s) to guild {guild_id}.')
+            else:
+                synced = await self.tree.sync()
+                print(f'Synced {len(synced)} command(s) globally.')
         except Exception as e:
             print(f'Failed to sync commands: {e}')
 

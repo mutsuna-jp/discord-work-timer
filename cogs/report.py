@@ -163,36 +163,35 @@ class ReportCog(commands.Cog):
         
         # Custom DB logic for batch operation
         # Custom DB logic for batch operation
-        async with self.bot.db.get_connection() as db:
+        if rows:
+            for user_id, username, total_seconds in rows:
+                await self.bot.db.execute(
+                    '''INSERT OR REPLACE INTO daily_summary (user_id, username, date, total_seconds) 
+                       VALUES (?, ?, ?, ?)''',
+                    (user_id, username, today_date_str, total_seconds)
+                )
+        
+        # 古いDaily Summaryデータを削除
+        cleanup_summary_threshold = now - timedelta(days=365)
+        cleanup_summary_threshold_str = cleanup_summary_threshold.strftime('%Y-%m-%d')
+        summary_deleted = await self.bot.db.execute("DELETE FROM daily_summary WHERE date < ?", (cleanup_summary_threshold_str,))
+        if summary_deleted is None:
+            summary_deleted = 0
+        
+        # 古いログを削除
+        cleanup_threshold = now - timedelta(days=self.keep_log_days)
+        logs_deleted = await self.bot.db.execute("DELETE FROM study_logs WHERE created_at < ?", (cleanup_threshold.isoformat(),))
+        if logs_deleted is None:
+            logs_deleted = 0
             
-            if rows:
-                for user_id, username, total_seconds in rows:
-                    await db.execute(
-                        '''INSERT OR REPLACE INTO daily_summary (user_id, username, date, total_seconds) 
-                           VALUES (?, ?, ?, ?)''',
-                        (user_id, username, today_date_str, total_seconds)
-                    )
-            
-            # 古いDaily Summaryデータを削除
-            cleanup_summary_threshold = now - timedelta(days=365)
-            cleanup_summary_threshold_str = cleanup_summary_threshold.strftime('%Y-%m-%d')
-            cursor = await db.execute("DELETE FROM daily_summary WHERE date < ?", (cleanup_summary_threshold_str,))
-            summary_deleted = cursor.rowcount
-            
-            # 古いログを削除
-            cleanup_threshold = now - timedelta(days=self.keep_log_days)
-            cursor = await db.execute("DELETE FROM study_logs WHERE created_at < ?", (cleanup_threshold.isoformat(),))
-            logs_deleted = cursor.rowcount
-            
-            # VACUUM を実行
-            await db.execute("VACUUM")
-            await db.commit()
-            
-            # データベースサイズを監視
-            db_path = self.bot.db.db_path
-            db_size_bytes = os.path.getsize(db_path) if os.path.exists(db_path) else 0
-            db_size_mb = db_size_bytes / (1024 * 1024)
-            print(f"📊 DBクリーンアップ完了 - スタディログ削除: {logs_deleted}件, DB容量: {db_size_mb:.2f} MB")
+        # VACUUM を実行
+        await self.bot.db.execute_script("VACUUM")
+        
+        # データベースサイズを監視
+        db_path = self.bot.db.db_path
+        db_size_bytes = os.path.getsize(db_path) if os.path.exists(db_path) else 0
+        db_size_mb = db_size_bytes / (1024 * 1024)
+        print(f"📊 DBクリーンアップ完了 - スタディログ削除: {logs_deleted}件, DB容量: {db_size_mb:.2f} MB")
 
         await self.send_database_backup(today_date_str, today_disp_str, logs_deleted, summary_deleted, db_size_mb)
 
