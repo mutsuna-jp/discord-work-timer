@@ -34,6 +34,8 @@ def init_db():
                      (user_id INTEGER, username TEXT, start_time TEXT, duration_seconds INTEGER, created_at TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS daily_summary
                      (user_id INTEGER, username TEXT, date TEXT, total_seconds INTEGER, PRIMARY KEY(user_id, date))''')
+        c.execute('''CREATE TABLE IF NOT EXISTS personal_timers
+                     (user_id INTEGER, end_time TEXT, minutes INTEGER)''')
         conn.commit()
 
 def get_today_seconds(user_id):
@@ -102,35 +104,84 @@ async def delete_previous_message(channel, message_id):
         except Exception as e:
             print(f"メッセージ削除エラー: {e}")
 
-# 作業中かどうかを判定（VCにいて、かつスピーカーミュートしてない）
 def is_active(voice_state):
     return voice_state.channel is not None and not voice_state.self_deaf
+
+# ▼▼▼ 追加: タイマー設定の共通処理 ▼▼▼
+async def set_personal_timer(message, minutes):
+    # メッセージ削除
+    if message.guild:
+        try:
+            await message.delete()
+        except:
+            pass
+
+    if minutes <= 0:
+        await message.author.send(MESSAGES["timer"]["invalid"])
+        return
+    
+    if minutes > 180:
+        await message.author.send(MESSAGES["timer"]["too_long"])
+        return
+
+    end_time = datetime.now() + timedelta(minutes=minutes)
+    end_time_str = end_time.isoformat()
+    end_time_disp = end_time.strftime('%H:%M')
+
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT INTO personal_timers VALUES (?, ?, ?)",
+                  (message.author.id, end_time_str, minutes))
+        conn.commit()
+
+    await message.author.send(MESSAGES["timer"]["set"].format(minutes=minutes, end_time=end_time_disp))
 
 @bot.event
 async def on_ready():
     init_db()
     if not daily_report_task.is_running():
         daily_report_task.start()
+    if not check_timers_task.is_running():
+        check_timers_task.start()
     
     print(f'ログインしました: {bot.user}')
 
-    # ▼▼▼ 再起動時のセッション自動復旧処理 ▼▼▼
     print("現在のVC状態を確認中...")
     recovered_count = 0
     
     for guild in bot.guilds:
         for vc in guild.voice_channels:
             for member in vc.members:
-                # ボットではなく、かつ作業中（ミュートしてない）状態の人
                 if not member.bot and is_active(member.voice):
                     if member.id not in voice_state_log:
-                        # 現在時刻を「入室時間」として仮登録
                         voice_state_log[member.id] = datetime.now()
                         recovered_count += 1
                         print(f"復旧: {member.display_name} さんの計測を再開しました")
     
     if recovered_count > 0:
         print(f"合計 {recovered_count} 名の作業セッションを復旧しました。")
+
+# ▼▼▼ 追加: メッセージ監視（!数字 の検知） ▼▼▼
+@bot.event
+async def on_message(message):
+    # ボット自身の発言は無視
+    if message.author.bot:
+        return
+
+    # "!数字" のパターンかどうかチェック (例: !10, !30)
+    # message.content[1:] が数字のみで構成されているか
+    if message.content.startswith('!') and message.content[1:].isdigit():
+        try:
+            minutes = int(message.content[1:])
+            # タイマー処理を実行
+            await set_personal_timer(message, minutes)
+            # タイマーだった場合はここで終了（他のコマンドとして処理させない）
+            return
+        except ValueError:
+            pass
+
+    # その他のコマンド(!rankなど)を処理するために必要
+    await bot.process_commands(message)
 
 @bot.event
 async def on_voice_state_update(member, before, after):
@@ -145,9 +196,8 @@ async def on_voice_state_update(member, before, after):
     was_active = is_active(before)
     is_active_now = is_active(after)
 
-    # 1. 作業開始 (入室、またはミュート解除)
+    # 1. 作業開始
     if not was_active and is_active_now:
-        # ★必ず前回の「退室/休憩」ログを消す
         if text_channel:
             await delete_previous_message(text_channel, message_tracker[member.id].get('leave_msg_id'))
 
@@ -179,9 +229,8 @@ async def on_voice_state_update(member, before, after):
             
         asyncio.create_task(speak_in_vc(after.channel, speak_text, member))
 
-    # 2. 作業終了 (退室、またはミュート開始)
+    # 2. 作業終了
     elif was_active and not is_active_now:
-        # ★必ず前回の「入室/再開」ログを消す
         if text_channel:
             await delete_previous_message(text_channel, message_tracker[member.id].get('join_msg_id'))
 
@@ -228,6 +277,35 @@ async def on_voice_state_update(member, before, after):
             leave_msg = await text_channel.send(embed=embed)
             message_tracker[member.id]['leave_msg_id'] = leave_msg.id
 
+# 元のコマンドも一応残しておきます（共通関数を呼ぶだけ）
+@bot.command()
+async def timer(ctx, minutes: int = 0):
+    await set_personal_timer(ctx.message, minutes)
+
+@tasks.loop(seconds=10)
+async def check_timers_task():
+    now_str = datetime.now().isoformat()
+    
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT rowid, user_id, minutes FROM personal_timers WHERE end_time <= ?", (now_str,))
+        expired_timers = c.fetchall()
+        
+        for rowid, user_id, minutes in expired_timers:
+            try:
+                user = bot.get_user(user_id)
+                if not user:
+                    user = await bot.fetch_user(user_id)
+                
+                if user:
+                    await user.send(MESSAGES["timer"]["finish"].format(minutes=minutes))
+            except Exception as e:
+                print(f"タイマー通知エラー (User ID: {user_id}): {e}")
+            
+            c.execute("DELETE FROM personal_timers WHERE rowid = ?", (rowid,))
+        
+        conn.commit()
+
 @bot.command()
 async def rank(ctx):
     now = datetime.now()
@@ -268,11 +346,6 @@ async def rank(ctx):
 
 @bot.command()
 async def add(ctx, member: discord.Member, minutes: int):
-    """
-    指定したメンバーの作業時間を手動で追加・削除します。
-    使い方: !add @ユーザー名 30  (30分追加)
-           !add @ユーザー名 -10 (10分削除)
-    """
     now = datetime.now()
     total_seconds = minutes * 60
     
