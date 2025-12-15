@@ -46,7 +46,10 @@ class ReportCog(commands.Cog):
 
         if not rows:
             msg = MESSAGES.get("rank", {}).get("empty_message", "データがありません")
-            await ctx.send(msg)
+            try:
+                await ctx.author.send(msg)
+            except discord.Forbidden:
+                await ctx.send(f"{ctx.author.mention} DMを送信できませんでした。設定をご確認ください。", delete_after=10)
             return
 
         rank_config = MESSAGES.get("rank", {})
@@ -62,16 +65,11 @@ class ReportCog(commands.Cog):
         
         embed.add_field(name="Top Members", value=rank_text, inline=False)
         
-        # 前回のランクメッセージを削除
-        log_channel_id = getattr(self.bot, 'LOG_CHANNEL_ID', 0)
-        text_channel = self.bot.get_channel(log_channel_id)
-        
-        if text_channel and ctx.author.id in self.rank_msg_tracker:
-            await delete_previous_message(text_channel, self.rank_msg_tracker[ctx.author.id])
-        
-        # 新しいランクメッセージを送信して記録
-        rank_msg = await ctx.send(embed=embed)
-        self.rank_msg_tracker[ctx.author.id] = rank_msg.id
+        # DMに送信
+        try:
+            await ctx.author.send(embed=embed)
+        except discord.Forbidden:
+            await ctx.send(f"{ctx.author.mention} DMを送信できませんでした。設定をご確認ください。", delete_after=10)
 
     @commands.command()
     async def stats(self, ctx):
