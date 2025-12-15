@@ -50,6 +50,8 @@ class Database:
                          (user_id INTEGER, end_time TEXT, minutes INTEGER)''')
             await db.execute('''CREATE TABLE IF NOT EXISTS study_message_states
                          (user_id INTEGER PRIMARY KEY, join_msg_id INTEGER, leave_msg_id INTEGER)''')
+            await db.execute('''CREATE TABLE IF NOT EXISTS user_tasks
+                         (user_id INTEGER PRIMARY KEY, task_content TEXT)''')
             
             await db.execute('''CREATE INDEX IF NOT EXISTS idx_study_logs_user_created 
                          ON study_logs(user_id, created_at)''')
@@ -103,4 +105,20 @@ class Database:
         await self.execute(
             "INSERT INTO study_logs VALUES (?, ?, ?, ?, ?)",
             (user_id, username, join_time.isoformat(), duration_seconds, leave_time.isoformat())
+        )
+
+    async def get_user_task(self, user_id):
+        """ユーザーの現在取組中のタスクを取得"""
+        result = await self.execute(
+            '''SELECT task_content FROM user_tasks WHERE user_id = ?''',
+            (user_id,),
+            fetch_one=True
+        )
+        return result[0] if result else None
+
+    async def set_user_task(self, user_id, task_content):
+        """ユーザーのタスクを設定"""
+        await self.execute(
+            '''INSERT OR REPLACE INTO user_tasks (user_id, task_content) VALUES (?, ?)''',
+            (user_id, task_content)
         )

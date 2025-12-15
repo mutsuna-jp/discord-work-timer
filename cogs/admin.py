@@ -31,6 +31,15 @@ class AdminCog(commands.Cog):
     @app_commands.default_permissions(administrator=True) 
     async def add(self, interaction: discord.Interaction, member: discord.Member, minutes: int):
         """ユーザーの作業時間を追加・削除"""
+        # BACKUP_CHANNEL_ID でのみ実行可能にする
+        backup_channel_id = getattr(self.bot, 'BACKUP_CHANNEL_ID', 0)
+        if backup_channel_id and interaction.channel_id != backup_channel_id:
+            await interaction.response.send_message(
+                f"このコマンドはバックアップチャンネル <#{backup_channel_id}> でのみ実行可能です。",
+                ephemeral=True
+            )
+            return
+
         await interaction.response.defer()
 
         now = datetime.now()

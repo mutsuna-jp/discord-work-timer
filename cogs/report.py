@@ -1,10 +1,13 @@
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, timezone
 import os
 from utils import format_duration, delete_previous_message, safe_message_delete, create_embed_from_config
 from messages import MESSAGES
+
+# JSTの定義
+JST = timezone(timedelta(hours=9))
 
 class ReportCog(commands.Cog):
     def __init__(self, bot):
@@ -18,7 +21,7 @@ class ReportCog(commands.Cog):
         self.pending_vc_clears = set()
         
         # タスクを開始
-        self.daily_report_task.change_interval(time=time(hour=self.daily_report_hour, minute=self.daily_report_minute))
+        self.daily_report_task.change_interval(time=time(hour=self.daily_report_hour, minute=self.daily_report_minute, tzinfo=JST))
         self.daily_report_task.start()
 
     def cog_unload(self):
@@ -112,13 +115,37 @@ class ReportCog(commands.Cog):
         # Ephemeral (自分だけに見える) メッセージとして送信
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @tasks.loop(time=time(hour=23, minute=59))
+    @app_commands.command(name="daily_report", description="[管理者用] 日報とバックアップを手動実行します")
+    @app_commands.describe(days_offset="何日前のデータとして実行するか (例: 1 = 昨日)")
+    @app_commands.default_permissions(administrator=True)
+    async def manual_daily_report(self, interaction: discord.Interaction, days_offset: int = 0):
+        """手動で日報・バックアップを実行"""
+        # BACKUP_CHANNEL_ID でのみ実行可能にする
+        backup_channel_id = getattr(self.bot, 'BACKUP_CHANNEL_ID', 0)
+        if backup_channel_id and interaction.channel_id != backup_channel_id:
+            await interaction.response.send_message(
+                f"このコマンドはバックアップチャンネル <#{backup_channel_id}> でのみ実行可能です。",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer()
+        
+        target_date = datetime.now()
+        if days_offset > 0:
+            target_date = target_date - timedelta(days=days_offset)
+            
+        await self.execute_daily_report(target_date)
+        await interaction.followup.send(f"日報とバックアップの実行が完了しました (対象: {target_date.strftime('%Y/%m/%d')})")
+
+    @tasks.loop(time=time(hour=23, minute=59, tzinfo=JST))
     async def daily_report_task(self):
         """毎日日報を送信し、ログをクリーンアップ"""
+        await self.execute_daily_report(datetime.now())
+
+    async def execute_daily_report(self, now: datetime):
         summary_channel_id = getattr(self.bot, 'SUMMARY_CHANNEL_ID', 0)
         channel = self.bot.get_channel(summary_channel_id)
-        
-        now = datetime.now()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_str = today_start.isoformat()
         today_date_str = now.strftime('%Y-%m-%d')

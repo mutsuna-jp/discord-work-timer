@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 from datetime import datetime
 from utils import format_duration, speak_in_vc, delete_previous_message, create_embed_from_config
 from messages import MESSAGES
@@ -18,6 +19,13 @@ class StudyCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.voice_state_log = {}
+
+    @app_commands.command(name="task", description="現在取り組んでいるタスクを設定します")
+    @app_commands.describe(content="タスクの内容")
+    async def task(self, interaction: discord.Interaction, content: str):
+        """タスク設定コマンド"""
+        await self.bot.db.set_user_task(interaction.user.id, content)
+        await interaction.response.send_message(f"タスクを設定しました: **{content}**", ephemeral=True)
 
     def is_active(self, voice_state):
         """ユーザーが実際にVCで活動中か判定"""
@@ -95,9 +103,17 @@ class StudyCog(commands.Cog):
             # DB更新: join_msg_idを設定、leave_msg_idは削除(None)
             await self.bot.db.set_message_state(member.id, join_msg.id, None)
 
+        # Task support for speak message
+        user_task = await self.bot.db.get_user_task(member.id)
+
         if msg_type == "join":
             msg_fmt = MESSAGES.get("join", {}).get("message", "{name}さん、が作業を始めました。")
-            speak_text = msg_fmt.format(name=member.display_name, current_total=time_str_speak)
+            
+            if user_task:
+                speak_text = f"{member.display_name}さん、が{user_task}を始めました。"
+            else:
+                speak_text = msg_fmt.format(name=member.display_name, current_total=time_str_speak)
+
             self.bot.loop.create_task(speak_in_vc(after.channel, speak_text, member.id))
 
     async def handle_voice_leave(self, member, after, text_channel):
