@@ -14,6 +14,7 @@ class ReportCog(commands.Cog):
         self.daily_report_hour = getattr(bot, 'DAILY_REPORT_HOUR', 23)
         self.daily_report_minute = getattr(bot, 'DAILY_REPORT_MINUTE', 59)
         self.keep_log_days = getattr(bot, 'KEEP_LOG_DAYS', 30)
+        self.pending_vc_clears = set()
         
         # タスクを開始
         self.daily_report_task.change_interval(time=time(hour=self.daily_report_hour, minute=self.daily_report_minute))
@@ -199,6 +200,9 @@ class ReportCog(commands.Cog):
 
         await self.send_database_backup(today_date_str, today_disp_str, logs_deleted, summary_deleted, db_size_mb)
 
+        # VCチャットのクリーンアップ
+        await self.cleanup_vc_chats()
+
     async def send_database_backup(self, today_date_str, today_disp_str, logs_deleted=0, summary_deleted=0, db_size_mb=0):
         """データベースのバックアップをチャネルに送信"""
         backup_channel_id = getattr(self.bot, 'BACKUP_CHANNEL_ID', 0)
@@ -226,6 +230,40 @@ class ReportCog(commands.Cog):
                 print("バックアップ送信完了")
             except Exception as e:
                 print(f"バックアップ送信エラー: {e}")
+
+    async def cleanup_vc_chats(self):
+        """全てのVCチャットをクリーンアップ（人がいる場合は待機）"""
+        print("VCチャットのクリーンアップを開始します...")
+        for guild in self.bot.guilds:
+            for vc in guild.voice_channels:
+                # 権限チェック
+                permissions = vc.permissions_for(guild.me)
+                if not permissions.manage_messages or not permissions.read_messages:
+                    continue
+                
+                if len(vc.members) == 0:
+                    try:
+                        await vc.purge(limit=None)
+                        # pendingにあれば削除
+                        self.pending_vc_clears.discard(vc.id)
+                    except Exception as e:
+                        print(f"VCチャット削除エラー ({vc.name}): {e}")
+                else:
+                    self.pending_vc_clears.add(vc.id)
+                    print(f"VCチャット削除待機 ({vc.name}): {len(vc.members)}名が参加中")
+
+    @commands.Cog.listener()
+    async def on_voice_state_update(self, member, before, after):
+        # 退出時にペンディングリストにあるか確認
+        if before.channel and before.channel.id in self.pending_vc_clears:
+             if len(before.channel.members) == 0:
+                 try:
+                     print(f"参加者がいなくなったため、チャットを削除します: {before.channel.name}")
+                     await before.channel.purge(limit=None)
+                 except Exception as e:
+                     print(f"VCチャット削除エラー ({before.channel.name}): {e}")
+                 finally:
+                     self.pending_vc_clears.discard(before.channel.id)
 
 async def setup(bot):
     await bot.add_cog(ReportCog(bot))
