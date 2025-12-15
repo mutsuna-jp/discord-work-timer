@@ -3,6 +3,7 @@ services:
     build: .
     container_name: work-timer-bot
     restart: always
+    stop_grace_period: 30s
     env_file:
       - .env
     volumes:
