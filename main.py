@@ -13,7 +13,6 @@ intents = discord.Intents.default()
 intents.voice_states = True
 intents.message_content = True
 
-# コマンドプレフィックスを '!' に設定 (例: !rank)
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # 入室時間を一時保存する辞書
@@ -25,11 +24,37 @@ DB_PATH = "/data/study_log.db"
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # ログ保存用テーブル
     c.execute('''CREATE TABLE IF NOT EXISTS study_logs
                  (user_id INTEGER, username TEXT, start_time TEXT, duration_seconds INTEGER, created_at TEXT)''')
     conn.commit()
     conn.close()
+
+# 今日の合計秒数を取得する関数
+def get_today_seconds(user_id):
+    # 今日の0時0分0秒を取得
+    now = datetime.now()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_str = today_start.isoformat()
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    # 今日以降(created_at >= today_str)のログを合計する
+    c.execute('''
+        SELECT SUM(duration_seconds)
+        FROM study_logs
+        WHERE user_id = ? AND created_at >= ?
+    ''', (user_id, today_str))
+    result = c.fetchone()[0]
+    conn.close()
+    
+    return result if result else 0
+
+# 秒数を「◯時間◯分」の文字列にする関数
+def format_duration(total_seconds):
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    return f"{hours}時間 {minutes}分 {seconds}秒"
 
 @bot.event
 async def on_ready():
@@ -41,12 +66,20 @@ async def on_voice_state_update(member, before, after):
     if member.bot:
         return
 
-    # 入室
+    channel = bot.get_channel(LOG_CHANNEL_ID)
+
+    # 1. 入室検知
     if before.channel is None and after.channel is not None:
         voice_state_log[member.id] = datetime.now()
-        print(f'{member.name} 入室')
+        
+        # 今日の既存の合計時間を取得して表示
+        today_sec = get_today_seconds(member.id)
+        time_str = format_duration(today_sec)
+        
+        if channel:
+            await channel.send(f"👋 こんにちは **{member.display_name}** さん！\n今日の積み上げ: **{time_str}** からスタートです🔥")
 
-    # 退室
+    # 2. 退室検知
     elif before.channel is not None and after.channel is None:
         if member.id in voice_state_log:
             join_time = voice_state_log[member.id]
@@ -62,25 +95,23 @@ async def on_voice_state_update(member, before, after):
             conn.commit()
             conn.close()
 
-            # 時間計算
-            hours = total_seconds // 3600
-            minutes = (total_seconds % 3600) // 60
-            seconds = total_seconds % 60
-
-            # 通知
-            channel = bot.get_channel(LOG_CHANNEL_ID)
+            # 今回の時間
+            current_str = format_duration(total_seconds)
+            
+            # 記録後の合計時間（今日）
+            today_sec = get_today_seconds(member.id)
+            total_str = format_duration(today_sec)
+            
             if channel:
-                msg = (f"お疲れ様でした！🍵\n"
-                       f"**{member.display_name}** さんの作業時間: "
-                       f"**{hours}時間 {minutes}分 {seconds}秒**")
+                msg = (f"🍵 お疲れ様でした！ **{member.display_name}** さん\n"
+                       f"今回の作業時間: **{current_str}**\n"
+                       f"今日の総作業時間: **{total_str}**")
                 await channel.send(msg)
             
             del voice_state_log[member.id]
 
-# !rank コマンドの実装
 @bot.command()
 async def rank(ctx):
-    # 今週の月曜日を取得（月曜始まり）
     now = datetime.now()
     monday = now - timedelta(days=now.weekday())
     monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -88,8 +119,6 @@ async def rank(ctx):
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
-    # 今週のデータを集計して降順に並べるSQL
     c.execute('''
         SELECT username, SUM(duration_seconds) as total_time
         FROM study_logs
@@ -98,7 +127,6 @@ async def rank(ctx):
         ORDER BY total_time DESC
         LIMIT 10
     ''', (monday_str,))
-    
     rows = c.fetchall()
     conn.close()
 
@@ -106,14 +134,11 @@ async def rank(ctx):
         await ctx.send("今週はまだ誰も作業していません...！一番乗りを目指しましょう！🏃‍♂️")
         return
 
-    # ランキング表示の作成
     msg = "🏆 **今週の作業時間ランキング** 🏆\n(集計期間: 月曜日〜現在)\n\n"
     for i, (username, total_seconds) in enumerate(rows, 1):
-        hours = total_seconds // 3600
-        minutes = (total_seconds % 3600) // 60
-        
+        time_str = format_duration(total_seconds)
         icon = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-        msg += f"{icon} **{username}**: {hours}時間 {minutes}分\n"
+        msg += f"{icon} **{username}**: {time_str}\n"
 
     await ctx.send(msg)
 
