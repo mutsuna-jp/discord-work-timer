@@ -384,6 +384,8 @@ async def check_timers_task():
 @bot.command()
 async def rank(ctx):
     """週間ランキングを表示"""
+    await safe_message_delete(ctx.message)
+    
     now = datetime.now()
     monday = now - timedelta(days=now.weekday())
     monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -417,7 +419,17 @@ async def rank(ctx):
         rank_text += MESSAGES["rank"]["row"].format(icon=icon, name=username, time=time_str)
     
     embed.add_field(name="Top Members", value=rank_text, inline=False)
-    await ctx.send(embed=embed)
+    
+    # 前回のランクメッセージを削除
+    text_channel = bot.get_channel(LOG_CHANNEL_ID)
+    if text_channel and ctx.author.id in message_tracker and 'rank_msg_id' in message_tracker[ctx.author.id]:
+        await delete_previous_message(text_channel, message_tracker[ctx.author.id]['rank_msg_id'])
+    
+    # 新しいランクメッセージを送信して記録
+    rank_msg = await ctx.send(embed=embed)
+    if ctx.author.id not in message_tracker:
+        message_tracker[ctx.author.id] = {}
+    message_tracker[ctx.author.id]['rank_msg_id'] = rank_msg.id
 
 @bot.command()
 async def stats(ctx):
