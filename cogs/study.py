@@ -48,13 +48,13 @@ class StudyCog(commands.Cog):
 
         # 1. 作業開始
         if not was_active and is_active_now:
-            await self.handle_voice_join(member, after, text_channel)
+            await self.handle_voice_join(member, before, after, text_channel)
 
         # 2. 作業終了
         elif was_active and not is_active_now:
             await self.handle_voice_leave(member, after, text_channel)
 
-    async def handle_voice_join(self, member, after, text_channel):
+    async def handle_voice_join(self, member, before, after, text_channel):
         """ユーザーがVCに参加した場合の処理"""
         # DBから以前のメッセージ状態を取得
         state = self.bot.db.get_message_state(member.id)
@@ -69,7 +69,7 @@ class StudyCog(commands.Cog):
         time_str_text = format_duration(today_sec, for_voice=False)
         time_str_speak = format_duration(today_sec, for_voice=True)
 
-        msg_type = "join" if after.channel is not None else "resume"
+        msg_type = "join" if before.channel is None else "resume"
         
         if text_channel:
             embed = discord.Embed(
