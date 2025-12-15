@@ -39,18 +39,14 @@ class CheerView(discord.ui.View):
         # Embedを更新する処理
         embed = interaction.message.embeds[0]
         
-        # 応援者の名前リストを生成
-        supporter_names = []
+        # 応援者のメンションリストを生成
+        supporter_mentions = []
         for user_id in self.supporters:
-            member = interaction.guild.get_member(user_id)
-            if member:
-                supporter_names.append(member.display_name)
-            else:
-                supporter_names.append("Unknown")
+             supporter_mentions.append(f"<@{user_id}>")
             
-        text = "、".join(supporter_names)
-        field_name = "📣 応援してくれた人"
-        field_value = f"{text} さんが応援しています！"
+        text = " ".join(supporter_mentions)
+        field_name = f"📣 応援 ({len(self.supporters)})"
+        field_value = text
 
         # 既存の「応援」フィールドがあれば更新、なければ追加
         found = False
