@@ -23,6 +23,10 @@ intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 voice_state_log = {}
+# ▼▼▼ 追加: メッセージIDを管理する辞書 ▼▼▼
+message_tracker = {} 
+# 構造: {user_id: {'join_msg_id': 123, 'leave_msg_id': 456}}
+
 DB_PATH = "/data/study_log.db"
 
 def init_db():
@@ -83,6 +87,17 @@ async def speak_in_vc(voice_channel, text):
         if voice_channel.guild.voice_client:
              await voice_channel.guild.voice_client.disconnect()
 
+# ▼▼▼ 追加: メッセージ削除用の関数 ▼▼▼
+async def delete_previous_message(channel, message_id):
+    if message_id:
+        try:
+            msg = await channel.fetch_message(message_id)
+            await msg.delete()
+        except discord.NotFound:
+            pass # 既に手動で消されている場合は無視
+        except Exception as e:
+            print(f"メッセージ削除エラー: {e}")
+
 @bot.event
 async def on_ready():
     init_db()
@@ -96,6 +111,10 @@ async def on_voice_state_update(member, before, after):
         return
 
     text_channel = bot.get_channel(LOG_CHANNEL_ID)
+    
+    # トラッカーの初期化
+    if member.id not in message_tracker:
+        message_tracker[member.id] = {}
 
     # 1. 入室検知
     if before.channel is None and after.channel is not None:
@@ -105,6 +124,9 @@ async def on_voice_state_update(member, before, after):
         # Embedで通知
         time_str_text = format_duration(today_sec, for_voice=False)
         if text_channel:
+            # ★前回の「退室ログ」があれば消す
+            await delete_previous_message(text_channel, message_tracker[member.id].get('leave_msg_id'))
+            
             embed = discord.Embed(
                 title=MESSAGES["join"]["embed_title"],
                 color=MESSAGES["join"]["embed_color"]
@@ -115,7 +137,10 @@ async def on_voice_state_update(member, before, after):
                 value=MESSAGES["join"]["field_value"].format(current_total=time_str_text),
                 inline=False
             )
-            await text_channel.send(embed=embed)
+            
+            # メッセージを送信し、IDを記録する (delete_afterは削除)
+            join_msg = await text_channel.send(embed=embed)
+            message_tracker[member.id]['join_msg_id'] = join_msg.id
 
         # 音声読み上げ
         time_str_speak = format_duration(today_sec, for_voice=True)
@@ -142,13 +167,15 @@ async def on_voice_state_update(member, before, after):
             total_str = format_duration(today_sec, for_voice=False)
             
             if text_channel:
+                # ★今回の「入室ログ」を消す
+                await delete_previous_message(text_channel, message_tracker[member.id].get('join_msg_id'))
+
                 embed = discord.Embed(
                     title=MESSAGES["leave"]["embed_title"],
                     color=MESSAGES["leave"]["embed_color"]
                 )
                 embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
                 
-                # ▼▼▼ 修正箇所: 改行を入れ、messages.pyの値を使うように変更 ▼▼▼
                 embed.add_field(
                     name=MESSAGES["leave"]["field1_name"],
                     value=MESSAGES["leave"]["field1_value"].format(time=current_str),
@@ -159,9 +186,10 @@ async def on_voice_state_update(member, before, after):
                     value=MESSAGES["leave"]["field2_value"].format(total=total_str),
                     inline=False
                 )
-                # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
                 
-                await text_channel.send(embed=embed)
+                # メッセージを送信し、IDを記録する
+                leave_msg = await text_channel.send(embed=embed)
+                message_tracker[member.id]['leave_msg_id'] = leave_msg.id
             
             del voice_state_log[member.id]
 
@@ -254,7 +282,6 @@ async def daily_report_task():
     backup_channel = bot.get_channel(BACKUP_CHANNEL_ID)
     if backup_channel and os.path.exists(DB_PATH):
         try:
-            # 今日の日付をファイル名につける
             backup_filename = f"backup_{today_date_str}.db"
             file = discord.File(DB_PATH, filename=backup_filename)
             await backup_channel.send(f"🔒 **データベース自動バックアップ** ({today_disp_str})", file=file)
