@@ -18,8 +18,8 @@ MESSAGES = {
         "embed_title": "🍵 お疲れ様でした",
         "embed_color": 0x00BFFF, # 水色
         "fields": [
-            {"name": "今回の作業時間", "value": "**{time}**"},
-            {"name": "本日の総作業時間", "value": "**{total}**"}
+            {"name": "今回の記録", "value": "**{time}**"},
+            {"name": "本日の総記録", "value": "**{total}**"}
         ]
     },
 
@@ -54,7 +54,7 @@ MESSAGES = {
         "message": "{name}さん、作業再開です。",
         "embed_title": "🔥 作業再開！",
         "embed_color": 0xFF4500, # オレンジ色
-        "fields": [{"name": "今日の積み上げ", "value": "**{current_total}**"}]
+        "fields": [{"name": "今日の記録", "value": "**{current_total}**"}]
     },
 
     # ---------------------------
@@ -64,8 +64,8 @@ MESSAGES = {
         "embed_title": "☕ 休憩中...",
         "embed_color": 0xFFA500, # 黄色
         "fields": [
-            {"name": "今回の作業時間", "value": "**{time}**"},
-            {"name": "本日の総作業時間", "value": "**{total}**"}
+            {"name": "今回の記録", "value": "**{time}**"},
+            {"name": "本日の総記録", "value": "**{total}**"}
         ]
     },
 
