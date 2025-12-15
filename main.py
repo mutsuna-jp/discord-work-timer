@@ -4,13 +4,16 @@ import os
 import sqlite3
 from datetime import datetime, timedelta, time
 import asyncio
-import edge_tts 
+import edge_tts
+# メッセージ定義ファイルをインポート
+from messages import MESSAGES 
 
 # 環境変数
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', 0))
 SUMMARY_CHANNEL_ID = int(os.getenv('SUMMARY_CHANNEL_ID', 0))
 KEEP_LOG_DAYS = 30 
+VOICE_NAME = "ja-JP-NanamiNeural"
 
 # インテント設定
 intents = discord.Intents.default()
@@ -21,10 +24,6 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 voice_state_log = {}
 DB_PATH = "/data/study_log.db"
-
-# 使用する声の設定 (例: 日本語・女性・七海Neural)
-# 他の候補: "ja-JP-KeitaNeural" (男性) など
-VOICE_NAME = "ja-JP-NanamiNeural"
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -47,38 +46,38 @@ def get_today_seconds(user_id):
     conn.close()
     return result if result else 0
 
-def format_duration(total_seconds):
+def format_duration(total_seconds, for_voice=False):
     hours = total_seconds // 3600
     minutes = (total_seconds % 3600) // 60
-    # 読み上げ用に短く
-    if hours > 0:
-        return f"{hours}時間{minutes}分"
+    seconds = total_seconds % 60
+    
+    if for_voice:
+        # 音声用: 短く（0時間の時は言わない）
+        if hours > 0:
+            return f"{hours}時間{minutes}分"
+        else:
+            return f"{minutes}分"
     else:
-        return f"{minutes}分"
+        # テキスト用: 秒まで
+        return f"{hours}時間 {minutes}分 {seconds}秒"
 
-# ▼▼▼ 音声生成部分を edge-tts に変更 ▼▼▼
 async def generate_voice(text, output_path='voice.mp3'):
     communicate = edge_tts.Communicate(text, VOICE_NAME)
     await communicate.save(output_path)
 
-# VCで喋らせる関数
 async def speak_in_vc(voice_channel, text):
     try:
         vc = voice_channel.guild.voice_client
         if not vc:
             vc = await voice_channel.connect()
         
-        # 音声生成 (非同期)
         await generate_voice(text)
         
-        # 再生 (MP3を再生)
         source = discord.FFmpegPCMAudio("voice.mp3")
         if not vc.is_playing():
             vc.play(source)
-            
             while vc.is_playing():
                 await asyncio.sleep(1)
-            
             await vc.disconnect()
             
     except Exception as e:
@@ -106,14 +105,14 @@ async def on_voice_state_update(member, before, after):
         today_sec = get_today_seconds(member.id)
         
         # テキスト通知
-        time_str_text = f"{today_sec // 3600}時間 {(today_sec % 3600) // 60}分 {(today_sec % 60)}秒"
+        time_str_text = format_duration(today_sec, for_voice=False)
         if text_channel:
-            await text_channel.send(f"👋 こんにちは **{member.display_name}** さん！\n今日の積み上げ: **{time_str_text}** からスタートです🔥")
+            msg = MESSAGES["join_text"].format(name=member.display_name, current_total=time_str_text)
+            await text_channel.send(msg)
 
         # 音声読み上げ
-        time_str_speak = format_duration(today_sec)
-        # より自然な会話文に
-        speak_text = f"{member.display_name}さんが入室しました。現在{time_str_speak}です。"
+        time_str_speak = format_duration(today_sec, for_voice=True)
+        speak_text = MESSAGES["join_voice"].format(name=member.display_name, current_total=time_str_speak)
         
         asyncio.create_task(speak_in_vc(after.channel, speak_text))
 
@@ -132,14 +131,16 @@ async def on_voice_state_update(member, before, after):
             conn.commit()
             conn.close()
 
-            current_str = f"{total_seconds // 3600}時間 {(total_seconds % 3600) // 60}分 {total_seconds % 60}秒"
+            current_str = format_duration(total_seconds, for_voice=False)
             today_sec = get_today_seconds(member.id)
-            total_str = f"{today_sec // 3600}時間 {(today_sec % 3600) // 60}分 {today_sec % 60}秒"
+            total_str = format_duration(today_sec, for_voice=False)
             
             if text_channel:
-                msg = (f"🍵 お疲れ様でした！ **{member.display_name}** さん\n"
-                       f"今回の作業時間: **{current_str}**\n"
-                       f"今日の総作業時間: **{total_str}**")
+                msg = MESSAGES["leave_text"].format(
+                    name=member.display_name,
+                    duration=current_str,
+                    daily_total=total_str
+                )
                 await text_channel.send(msg)
             
             del voice_state_log[member.id]
@@ -165,14 +166,14 @@ async def rank(ctx):
     conn.close()
 
     if not rows:
-        await ctx.send("今週はまだ誰も作業していません...！")
+        await ctx.send(MESSAGES["rank_empty"])
         return
 
-    msg = "🏆 **今週の作業時間ランキング** 🏆\n(集計期間: 月曜日〜現在)\n\n"
+    msg = MESSAGES["rank_header"]
     for i, (username, total_seconds) in enumerate(rows, 1):
-        time_str = f"{total_seconds // 3600}時間 {(total_seconds % 3600) // 60}分"
+        time_str = format_duration(total_seconds, for_voice=True) # ランキングは短め表記で
         icon = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-        msg += f"{icon} **{username}**: {time_str}\n"
+        msg += MESSAGES["rank_row"].format(icon=icon, name=username, time=time_str)
 
     await ctx.send(msg)
 
@@ -183,22 +184,27 @@ async def daily_report_task():
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_str = today_start.isoformat()
     today_date_str = now.strftime('%Y-%m-%d')
+    today_disp_str = now.strftime('%Y/%m/%d')
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''SELECT user_id, username, SUM(duration_seconds) as total_time FROM study_logs WHERE created_at >= ? GROUP BY user_id ORDER BY total_time DESC''', (today_str,))
     rows = c.fetchall()
 
-    if channel and rows:
-        msg = f"📅 **{now.strftime('%Y/%m/%d')} の作業レポート** 📅\nみなさんお疲れ様でした！本日の成果です✨\n\n"
-        for _, username, total_seconds in rows:
-            hours = total_seconds // 3600
-            minutes = (total_seconds % 3600) // 60
-            msg += f"• **{username}**: {hours}時間 {minutes}分\n"
-        await channel.send(msg)
+    if channel:
+        if not rows:
+             await channel.send(MESSAGES["report_empty"])
+        else:
+            msg = MESSAGES["report_header"].format(date=today_disp_str)
+            for _, username, total_seconds in rows:
+                time_str = format_duration(total_seconds, for_voice=True)
+                msg += MESSAGES["report_row"].format(name=username, time=time_str)
+            await channel.send(msg)
     
-    for user_id, username, total_seconds in rows:
-        c.execute('''INSERT OR REPLACE INTO daily_summary (user_id, username, date, total_seconds) VALUES (?, ?, ?, ?)''', (user_id, username, today_date_str, total_seconds))
+    # データ保存とクリーンアップ（変更なし）
+    if rows:
+        for user_id, username, total_seconds in rows:
+            c.execute('''INSERT OR REPLACE INTO daily_summary (user_id, username, date, total_seconds) VALUES (?, ?, ?, ?)''', (user_id, username, today_date_str, total_seconds))
     
     cleanup_threshold = now - timedelta(days=KEEP_LOG_DAYS)
     c.execute("DELETE FROM study_logs WHERE created_at < ?", (cleanup_threshold.isoformat(),))
