@@ -75,7 +75,7 @@ MESSAGES = {
     "report": {
         "empty_message": "今日は誰も作業しませんでした...明日は頑張りましょう！🛌",
         "embed_title": "📅 本日の作業レポート ({date})",
-        "embed_desc": "みなさんお疲れ様でした！本日の成果です✨",
+        "embed_desc": "昨日の成果です✨",
         "embed_color": 0xFF69B4, # ピンク色
         "row": "• **{name}**: {time}\n"
     },
