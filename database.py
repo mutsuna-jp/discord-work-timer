@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 from typing import Optional, List, Any, Tuple, Union
 from datetime import datetime, timedelta, date
+from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -11,8 +12,14 @@ class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
 
-    def get_connection(self):
-        return aiosqlite.connect(self.db_path)
+    @asynccontextmanager
+    async def get_connection(self):
+        async with aiosqlite.connect(self.db_path) as db:
+            # WALモードでのパフォーマンスと信頼性のための設定
+            await db.execute("PRAGMA foreign_keys=ON")
+            await db.execute("PRAGMA synchronous=NORMAL")  # WALモード推奨
+            await db.execute("PRAGMA busy_timeout=5000")   # ロック競合時のタイムアウト設定
+            yield db
 
     async def execute_script(self, script: str) -> None:
         """複数のSQLを一括実行（VACUUMなどに使用）"""
@@ -47,6 +54,9 @@ class Database:
     async def setup(self) -> None:
         """データベーステーブルとインデックスの初期化"""
         async with self.get_connection() as db:
+            # WALモードを有効化（永続設定）
+            await db.execute("PRAGMA journal_mode=WAL")
+            
             await db.execute('''CREATE TABLE IF NOT EXISTS study_logs
                          (user_id INTEGER, username TEXT, start_time TEXT, duration_seconds INTEGER, created_at TEXT)''')
             await db.execute('''CREATE TABLE IF NOT EXISTS daily_summary
