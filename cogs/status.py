@@ -63,41 +63,52 @@ class StatusCog(commands.Cog):
             # 辞書をコピーして反復処理
             for user_id in list(active_users.keys()):
                 member = channel.guild.get_member(user_id)
-                
                 # ユーザーが見つからない、またはボイスチャンネルにいない場合
                 if not member or not member.voice or not member.voice.channel:
-                    # ログから削除
                     del active_users[user_id]
                     logger.info(f"ステータスボード更新: 不正な状態のユーザーID {user_id} を削除しました。")
 
-            # 2. メッセージの更新または削除
-            # Botの過去のメッセージを検索
+            # Botの過去のメッセージを検索 (Limitを増やして対応)
             my_messages = []
             try:
-                async for message in channel.history(limit=20):
+                # 新しい順に取得される
+                async for message in channel.history(limit=50):
                     if message.author == self.bot.user:
                         my_messages.append(message)
             except Exception as e:
                 logger.error(f"メッセージ履歴の取得に失敗: {e}")
+                return
+
+            # 新しい順 -> 古い順 に並べ替え（上から順に表示するため）
+            my_messages.reverse()
 
             if not active_users:
                 # 作業中のユーザーがいない場合 -> 全てのBotメッセージを削除
-                if my_messages:
-                    for msg in my_messages:
-                        try:
-                            await msg.delete()
-                        except Exception as e:
-                            logger.error(f"メッセージ削除失敗: {e}")
-                return # Embed作成処理はスキップ
+                for msg in my_messages:
+                    try:
+                        await msg.delete()
+                    except Exception as e:
+                        logger.error(f"メッセージ削除失敗: {e}")
+                return 
 
-            # 以下、作業者がいる場合のEmbed作成
-            embed = discord.Embed(title="📊 現在の作業状況", timestamp=datetime.now())
-            embed.color = 0x00FF00 # 緑
-            count = 0
+            # --- Embed作成処理 (複数メッセージページネーション対応) ---
+            all_embeds = []
             
-            for user_id, start_time in active_users.items():
+            # 1. ヘッダー用Embed
+            header_embed = discord.Embed(
+                title="📊 現在の作業状況", 
+                description=f"現在の作業人数: **{len(active_users)}** 名",
+                timestamp=datetime.now(),
+                color=0x00FF00
+            )
+            all_embeds.append(header_embed)
+            
+            # 2. ユーザーごとのEmbed作成
+            # 入室順（開始時間が早い順）にソート
+            sorted_users = sorted(active_users.items(), key=lambda item: item[1])
+
+            for user_id, start_time in sorted_users:
                 member = channel.guild.get_member(user_id)
-                # 上のチェックを通っているので member は存在するはずだが念の為
                 if not member:
                      try:
                         member = await channel.guild.fetch_member(user_id)
@@ -120,38 +131,49 @@ class StatusCog(commands.Cog):
                 else:
                     time_str = f"{minutes}分"
                 
-                embed.add_field(
-                    name=f"👤 {member.display_name}",
-                    value=f"📝 **{task}**\n⏱️ 接 続: {time_str}",
-                    inline=False
+                user_embed = discord.Embed(
+                    description=f" {task} ({time_str})",
+                    color=0x00FF00
                 )
-                count += 1
-            
-            embed.set_footer(text=f"現在 {count} 名が作業中")
+                user_embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
+                all_embeds.append(user_embed)
 
-            # メッセージの管理: 最新の1つだけ残し、他は削除
-            target_message = None
-            
-            if my_messages:
-                target_message = my_messages[0] # historyは新しい順なので先頭が最新
-                
-                # 2つ目以降（古いメッセージ）は削除
-                if len(my_messages) > 1:
-                    for msg in my_messages[1:]:
+            # 3. チャンク分け (1メッセージにつきEmbed10個まで)
+            chunk_size = 10
+            embed_chunks = [all_embeds[i:i + chunk_size] for i in range(0, len(all_embeds), chunk_size)]
+
+            # 4. 既存メッセージとの同期 (更新、新規送信、削除)
+            max_len = max(len(embed_chunks), len(my_messages))
+
+            for i in range(max_len):
+                # A. 更新または新規送信が必要な場合
+                if i < len(embed_chunks):
+                    chunk = embed_chunks[i]
+                    
+                    if i < len(my_messages):
+                        # 既存メッセージを更新
                         try:
-                            await msg.delete()
+                            await my_messages[i].edit(embeds=chunk)
+                        except discord.Forbidden:
+                            logger.error(f"ステータスボード更新削除エラー: 権限不足 (Channel ID: {channel.id})")
                         except Exception as e:
-                            logger.error(f"重複メッセージ削除失敗: {e}")
-            
-            try:
-                if target_message:
-                    await target_message.edit(embed=embed)
+                            logger.error(f"ステータスボード更新失敗: {e}")
+                    else:
+                        # 新規メッセージを送信
+                        try:
+                            await channel.send(embeds=chunk)
+                        except discord.Forbidden:
+                            logger.error(f"ステータスボード送信エラー: 権限不足 (Channel ID: {channel.id})")
+                        except Exception as e:
+                            logger.error(f"ステータスボード送信失敗: {e}")
+                
+                # B. 不要なメッセージの削除
                 else:
-                    await channel.send(embed=embed)
-            except discord.Forbidden:
-                logger.error(f"ステータスボード更新エラー: 権限不足のためメッセージの送信または編集ができませんでした。(Channel ID: {channel.id})")
-            except Exception as e:
-                logger.error(f"ステータスボードの更新に失敗しました: {e}")
+                    msg_to_delete = my_messages[i]
+                    try:
+                        await msg_to_delete.delete()
+                    except Exception as e:
+                        logger.error(f"余剰メッセージ削除失敗: {e}")
 
 async def setup(bot):
     await bot.add_cog(StatusCog(bot))
