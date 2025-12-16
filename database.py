@@ -110,6 +110,8 @@ class Database:
         return await self.execute(
             "SELECT user_id, join_msg_id FROM study_message_states WHERE join_msg_id IS NOT NULL",
             fetch_all=True
+        )
+
     async def get_last_session_duration_if_recent(self, user_id: int, threshold_seconds: int = 300) -> int:
         """
         直近のログを取得し、その終了時間が現在から threshold_seconds 以内であれば、
