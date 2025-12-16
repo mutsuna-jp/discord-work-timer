@@ -73,6 +73,11 @@ class StudyCog(commands.Cog):
         """タスク設定コマンド"""
         await self.bot.db.set_user_task(interaction.user.id, content)
         await interaction.response.send_message(f"タスクを設定しました: **{content}**", ephemeral=True)
+        
+        # ステータスボード更新
+        status_cog = self.bot.get_cog("StatusCog")
+        if status_cog:
+            await status_cog.update_status_board()
 
     def is_active(self, voice_state):
         """ユーザーが実際にVCで活動中か判定"""
@@ -134,6 +139,11 @@ class StudyCog(commands.Cog):
         time_str_text = format_duration(today_sec, for_voice=False)
         time_str_speak = format_duration(today_sec, for_voice=True)
 
+        # Task and Streak support
+        user_task = await self.bot.db.get_user_task(member.id)
+        task_name = user_task if user_task else "作業"
+        streak_days = await self.bot.db.get_user_streak(member.id)
+
         msg_type = "join" if before.channel is None else "resume"
         
         if text_channel:
@@ -142,7 +152,9 @@ class StudyCog(commands.Cog):
             embed = create_embed_from_config(
                 msg_config,
                 name=member.display_name,
-                current_total=time_str_text
+                current_total=time_str_text,
+                task=task_name,
+                days=streak_days
             )
             embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
             
@@ -151,18 +163,26 @@ class StudyCog(commands.Cog):
             # DB更新: join_msg_idを設定、leave_msg_idは削除(None)
             await self.bot.db.set_message_state(member.id, join_msg.id, None)
 
-        # Task support for speak message
-        user_task = await self.bot.db.get_user_task(member.id)
-
         if msg_type == "join":
-            msg_fmt = MESSAGES.get("join", {}).get("message", "{name}さん、が作業を始めました。")
+            msg_fmt = MESSAGES.get("join", {}).get("message", "{name}さんが{task}を始めました。現在{days}日継続中")
             
-            if user_task:
-                speak_text = f"{member.display_name}さん、が{user_task}を始めました。"
-            else:
-                speak_text = msg_fmt.format(name=member.display_name, current_total=time_str_speak)
+            try:
+                speak_text = msg_fmt.format(
+                    name=member.display_name, 
+                    task=task_name, 
+                    days=streak_days, 
+                    current_total=time_str_speak
+                )
+            except Exception as e:
+                logger.error(f"音声メッセージフォーマットエラー: {e}")
+                speak_text = f"{member.display_name}さんが作業を始めました。"
 
             self.bot.loop.create_task(speak_in_vc(after.channel, speak_text, member.id))
+
+        # ステータスボード更新
+        status_cog = self.bot.get_cog("StatusCog")
+        if status_cog:
+            await status_cog.update_status_board()
 
     async def handle_voice_leave(self, member, after, text_channel):
         """ユーザーがVCを離れた場合の処理"""
@@ -216,6 +236,11 @@ class StudyCog(commands.Cog):
             leave_msg = await text_channel.send(embed=embed)
             # DB更新: join_msg_idは削除(None)、leave_msg_idを設定
             await self.bot.db.set_message_state(member.id, None, leave_msg.id)
+
+        # ステータスボード更新
+        status_cog = self.bot.get_cog("StatusCog")
+        if status_cog:
+            await status_cog.update_status_board()
 
     async def check_and_award_milestones(self, member, total_seconds_session, text_channel):
         """累計時間に基づいて称号ロールを付与する"""

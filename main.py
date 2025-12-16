@@ -35,7 +35,8 @@ class WorkTimerBot(commands.Bot):
             'cogs.study',
             'cogs.report',
             'cogs.timer_cog',
-            'cogs.admin'
+            'cogs.admin',
+            'cogs.status'
         ]
         
         for extension in initial_extensions:

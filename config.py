@@ -21,6 +21,7 @@ class Config:
     LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', 0))
     SUMMARY_CHANNEL_ID = int(os.getenv('SUMMARY_CHANNEL_ID', 0))
     BACKUP_CHANNEL_ID = int(os.getenv('BACKUP_CHANNEL_ID', 0))
+    STATUS_CHANNEL_ID = int(os.getenv('STATUS_CHANNEL_ID', 0))
     GUILD_ID = os.getenv('GUILD_ID')
 
     # Application Settings

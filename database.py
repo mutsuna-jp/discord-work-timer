@@ -3,6 +3,7 @@ import os
 import logging
 from datetime import datetime
 from typing import Optional, List, Any, Tuple, Union
+from datetime import datetime, timedelta, date
 
 logger = logging.getLogger(__name__)
 
@@ -211,4 +212,57 @@ class Database:
             for rowid, _, _ in expired:
                 await self.execute("DELETE FROM personal_timers WHERE rowid = ?", (rowid,))
                 
+                
         return expired if expired else []
+
+    async def get_user_streak(self, user_id: int) -> int:
+        """ユーザーの連続ログイン日数を取得"""
+        # 過去のログから一意の日付を取得 (降順)
+        # substr(created_at, 1, 10) で 'YYYY-MM-DD' を抽出
+        query = '''
+            SELECT DISTINCT substr(created_at, 1, 10) as day 
+            FROM study_logs 
+            WHERE user_id = ? 
+            ORDER BY day DESC
+        '''
+        rows = await self.execute(query, (user_id,), fetch_all=True)
+        
+        if not rows:
+            return 1 # 初回は1日目
+
+        # 文字列を日付オブジェクトに変換
+        dates = []
+        for row in rows:
+            try:
+                d = datetime.strptime(row[0], "%Y-%m-%d").date()
+                dates.append(d)
+            except ValueError:
+                continue
+        
+        if not dates:
+            return 1
+
+        today = datetime.now().date()
+        streak = 0
+        current_check = today
+        
+        # 最新のログが今日かどうか確認
+        if dates[0] == today:
+            streak = 1
+            start_idx = 1
+            current_check = today - timedelta(days=1)
+        else:
+            # 今日はまだログがないが、今入室したので1日目としてカウント開始
+            streak = 1 
+            start_idx = 0
+            current_check = today - timedelta(days=1)
+            
+        # 過去に遡って連続性をチェック
+        for i in range(start_idx, len(dates)):
+            if dates[i] == current_check:
+                streak += 1
+                current_check -= timedelta(days=1)
+            else:
+                break
+                
+        return streak
