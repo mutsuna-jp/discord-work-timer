@@ -110,7 +110,39 @@ class Database:
         return await self.execute(
             "SELECT user_id, join_msg_id FROM study_message_states WHERE join_msg_id IS NOT NULL",
             fetch_all=True
-        )
+    async def get_last_session_duration_if_recent(self, user_id: int, threshold_seconds: int = 300) -> int:
+        """
+        直近のログを取得し、その終了時間が現在から threshold_seconds 以内であれば、
+        そのログの継続時間（秒）を返す。そうでなければ0を返す。
+        Bot再起動時のセッション継続時間復元に使用。
+        """
+        # 最新のログ1件を取得
+        query = '''
+            SELECT end_time, duration_seconds 
+            FROM study_logs 
+            WHERE user_id = ? 
+            ORDER BY created_at DESC 
+            LIMIT 1
+        '''
+        result = await self.execute(query, (user_id,), fetch_one=True)
+        
+        if not result:
+            return 0
+            
+        end_time_str, duration = result
+        try:
+            end_time = datetime.fromisoformat(end_time_str)
+            now = datetime.now()
+            
+            # 経過時間をチェック
+            diff = (now - end_time).total_seconds()
+            
+            if 0 <= diff <= threshold_seconds:
+                return duration
+        except Exception as e:
+            logger.error(f"日時変換エラー: {e}")
+            
+        return 0
 
     async def add_study_log(self, user_id: int, username: str, join_time: datetime, duration_seconds: int, leave_time: datetime) -> None:
         """学習ログを追加"""

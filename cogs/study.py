@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from datetime import datetime
+from datetime import datetime, timedelta
 from utils import format_duration, speak_in_vc, delete_previous_message, create_embed_from_config
 from messages import MESSAGES
 from config import Config
@@ -97,7 +97,20 @@ class StudyCog(commands.Cog):
                 for member in vc.members:
                     if not member.bot and self.is_active(member.voice):
                         if member.id not in self.voice_state_log:
-                            self.voice_state_log[member.id] = datetime.now()
+                            # デフォルトは現在時刻
+                            start_time = datetime.now()
+                            
+                            # 直近の停止前ログがあれば、その時間分だけ開始時間を過去にずらす（時間を引き継ぐ）
+                            try:
+                                # 10分(600秒)以内の再起動なら引き継ぎ対象とする
+                                last_duration = await self.bot.db.get_last_session_duration_if_recent(member.id, threshold_seconds=600)
+                                if last_duration > 0:
+                                    start_time = start_time - timedelta(seconds=last_duration)
+                                    logger.info(f"復旧: {member.display_name} さんの過去セッション({last_duration}秒)を引き継ぎました")
+                            except Exception as e:
+                                logger.error(f"セッション引き継ぎ計算エラー: {e}")
+
+                            self.voice_state_log[member.id] = start_time
                             recovered_count += 1
                             logger.info(f"復旧: {member.display_name} さんの計測を再開しました")
         

@@ -117,7 +117,9 @@ def create_embed_from_config(config, **kwargs):
             except Exception:
                 pass
                 
-            if name and value:
+            if value:
+                if not name:
+                    name = "\u200b"
                 embed.add_field(name=name, value=value, inline=inline)
     
     return embed
