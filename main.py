@@ -1,35 +1,13 @@
 import discord
 from discord.ext import commands
 import os
-import asyncio
 import signal
 import sys
 import logging
-from dotenv import load_dotenv
-
-# ロギング設定
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("main")
+from config import Config
 from database import Database
 
-# .env ファイルをロード (ローカル開発用)
-load_dotenv()
-
-# 環境変数
-TOKEN = os.getenv('DISCORD_BOT_TOKEN')
-LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', 0))
-SUMMARY_CHANNEL_ID = int(os.getenv('SUMMARY_CHANNEL_ID', 0))
-BACKUP_CHANNEL_ID = int(os.getenv('BACKUP_CHANNEL_ID', 0))
-
-# 定数
-DB_PATH = "/data/study_log.db"
-KEEP_LOG_DAYS = 30 
-DAILY_REPORT_HOUR = 23
-DAILY_REPORT_MINUTE = 59
+logger = logging.getLogger("main")
 
 class WorkTimerBot(commands.Bot):
     def __init__(self):
@@ -42,15 +20,11 @@ class WorkTimerBot(commands.Bot):
         super().__init__(command_prefix='!', intents=intents, help_command=None)
         
         # データベース管理
-        self.db = Database(DB_PATH)
+        self.db = Database(Config.DB_PATH)
         
-        # 設定の保持
-        self.LOG_CHANNEL_ID = LOG_CHANNEL_ID
-        self.SUMMARY_CHANNEL_ID = SUMMARY_CHANNEL_ID
-        self.BACKUP_CHANNEL_ID = BACKUP_CHANNEL_ID
-        self.DAILY_REPORT_HOUR = DAILY_REPORT_HOUR
-        self.DAILY_REPORT_MINUTE = DAILY_REPORT_MINUTE
-        self.KEEP_LOG_DAYS = KEEP_LOG_DAYS
+        # 設定の保持 (互換性のため、またはアクセスしやすくするため)
+        # 必要な場合は Config クラスを直接参照しても良い
+        self.config = Config
 
     async def setup_hook(self):
         """起動時の初期化処理"""
@@ -72,9 +46,7 @@ class WorkTimerBot(commands.Bot):
                 logger.error(f'Failed to load extension {extension}: {e}')
         
         # コマンドツリーの同期
-        # 注意: グローバル同期は反映に時間がかかる場合があります (最大1時間)
-        # 環境変数 GUILD_ID が設定されている場合は、特定のギルドのみ即時同期します
-        guild_id = os.getenv('GUILD_ID')
+        guild_id = Config.GUILD_ID
         try:
             if guild_id:
                 guild = discord.Object(id=int(guild_id))
@@ -83,7 +55,6 @@ class WorkTimerBot(commands.Bot):
                 print(f'Synced {len(synced)} command(s) to guild {guild_id}.')
                 
                 # 重複回避のため、グローバルコマンドを削除する
-                # これにより、開発環境で予測変換が2重に出るのを防ぎます
                 self.tree.clear_commands(guild=None)
                 await self.tree.sync()
                 print('Cleared global commands to prevent duplicates.')
@@ -96,11 +67,11 @@ class WorkTimerBot(commands.Bot):
     async def on_ready(self):
         logger.info(f'ログインしました: {self.user}')
         
-        # 1. ステータスの変更（「作業時間を記録中」と表示され、稼働中か一目でわかります）
+        # 1. ステータスの変更
         await self.change_presence(activity=discord.Game(name="作業時間を記録中"))
 
         # 2. 起動完了通知
-        channel = self.get_channel(self.LOG_CHANNEL_ID)
+        channel = self.get_channel(Config.LOG_CHANNEL_ID)
         if channel:
             embed = discord.Embed(
                 title="✅ システム起動完了",
@@ -114,7 +85,7 @@ class WorkTimerBot(commands.Bot):
         print("Botの停止処理を開始します...")
         try:
             # 終了通知
-            channel_id = self.LOG_CHANNEL_ID
+            channel_id = Config.LOG_CHANNEL_ID
             channel = self.get_channel(channel_id)
             
             # キャッシュにない場合はAPIから取得を試みる
@@ -142,7 +113,7 @@ class WorkTimerBot(commands.Bot):
         await super().close()
 
 if __name__ == '__main__':
-    if not TOKEN:
+    if not Config.TOKEN:
         print("エラー: DISCORD_BOT_TOKEN 環境変数が設定されていません。")
     else:
         bot = WorkTimerBot()
@@ -160,7 +131,7 @@ if __name__ == '__main__':
 
         print("🚀 Botプロセスを開始します...")
         try:
-            bot.run(TOKEN)
+            bot.run(Config.TOKEN)
         except KeyboardInterrupt:
             print("🛑 KeyboardInterruptを受信しました。終了処理へ移行します。")
             # bot.run() は KeyboardInterrupt で抜けると自動的に cleanup を行いますが、

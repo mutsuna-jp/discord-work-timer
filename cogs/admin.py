@@ -4,6 +4,7 @@ from discord import app_commands
 from datetime import datetime
 from utils import safe_message_delete, format_duration, create_embed_from_config
 from messages import MESSAGES
+from config import Config
 
 class AdminCog(commands.Cog):
     def __init__(self, bot):
@@ -33,7 +34,7 @@ class AdminCog(commands.Cog):
     async def add(self, interaction: discord.Interaction, member: discord.Member, minutes: int):
         """ユーザーの作業時間を追加・削除"""
         # BACKUP_CHANNEL_ID でのみ実行可能にする
-        backup_channel_id = getattr(self.bot, 'BACKUP_CHANNEL_ID', 0)
+        backup_channel_id = Config.BACKUP_CHANNEL_ID
         if backup_channel_id and interaction.channel_id != backup_channel_id:
             await interaction.response.send_message(
                 f"このコマンドはバックアップチャンネル <#{backup_channel_id}> でのみ実行可能です。",
@@ -65,7 +66,7 @@ class AdminCog(commands.Cog):
     async def clear_log(self, interaction: discord.Interaction):
         """ログチャンネルのクリーンアップ"""
         # BACKUP_CHANNEL_ID でのみ実行可能にする
-        backup_channel_id = getattr(self.bot, 'BACKUP_CHANNEL_ID', 0)
+        backup_channel_id = Config.BACKUP_CHANNEL_ID
         if backup_channel_id and interaction.channel_id != backup_channel_id:
             await interaction.response.send_message(
                 f"このコマンドはバックアップチャンネル <#{backup_channel_id}> でのみ実行可能です。",
@@ -75,7 +76,7 @@ class AdminCog(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
         
-        log_channel_id = getattr(self.bot, 'LOG_CHANNEL_ID', 0)
+        log_channel_id = Config.LOG_CHANNEL_ID
         log_channel = self.bot.get_channel(log_channel_id)
         
         if not log_channel:

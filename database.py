@@ -126,3 +126,89 @@ class Database:
             '''INSERT OR REPLACE INTO user_tasks (user_id, task_content) VALUES (?, ?)''',
             (user_id, task_content)
         )
+
+    async def get_weekly_ranking(self, start_date: str) -> List[Tuple[str, int]]:
+        """週間ランキングデータを取得"""
+        return await self.execute(
+            '''SELECT username, SUM(duration_seconds) as total_time
+               FROM study_logs
+               WHERE created_at >= ?
+               GROUP BY user_id
+               ORDER BY total_time DESC
+               LIMIT 10''',
+            (start_date,),
+            fetch_all=True
+        )
+
+    async def get_first_log_date(self, user_id: int) -> Optional[str]:
+        """ユーザーの最初のログ日時を取得"""
+        result = await self.execute(
+            '''SELECT MIN(created_at) FROM study_logs WHERE user_id = ?''',
+            (user_id,),
+            fetch_one=True
+        )
+        return result[0] if result else None
+
+    async def get_study_logs_in_range(self, start_date: str, end_date: Optional[str] = None) -> List[Tuple[int, str, int]]:
+        """指定期間の学習ログを集計して取得 (user_id, username, total_time)"""
+        if end_date:
+            query = '''SELECT user_id, username, SUM(duration_seconds) as total_time 
+                       FROM study_logs 
+                       WHERE created_at >= ? AND created_at < ?
+                       GROUP BY user_id 
+                       ORDER BY total_time DESC'''
+            params = (start_date, end_date)
+        else:
+            query = '''SELECT user_id, username, SUM(duration_seconds) as total_time 
+                       FROM study_logs 
+                       WHERE created_at >= ? 
+                       GROUP BY user_id 
+                       ORDER BY total_time DESC'''
+            params = (start_date,)
+            
+        return await self.execute(query, params, fetch_all=True)
+
+    async def save_daily_summary(self, user_id: int, username: str, date_str: str, total_seconds: int) -> None:
+        """日次サマリーを保存"""
+        await self.execute(
+            '''INSERT OR REPLACE INTO daily_summary (user_id, username, date, total_seconds) 
+               VALUES (?, ?, ?, ?)''',
+            (user_id, username, date_str, total_seconds)
+        )
+
+    async def cleanup_old_data(self, log_threshold: str, summary_threshold: str) -> Tuple[int, int]:
+        """古いデータを削除 (戻り値: logs_deleted, summary_deleted)"""
+        # 古いログを削除
+        logs_deleted = await self.execute("DELETE FROM study_logs WHERE created_at < ?", (log_threshold,))
+        if logs_deleted is None: logs_deleted = 0
+            
+        # 古いDaily Summaryデータを削除
+        summary_deleted = await self.execute("DELETE FROM daily_summary WHERE date < ?", (summary_threshold,))
+        if summary_deleted is None: summary_deleted = 0
+            
+        # VACUUM
+        await self.execute_script("VACUUM")
+        
+        return logs_deleted, summary_deleted
+
+    async def add_personal_timer(self, user_id: int, end_time_str: str, minutes: int) -> None:
+        """個人タイマーを追加"""
+        await self.execute(
+            "INSERT INTO personal_timers VALUES (?, ?, ?)",
+            (user_id, end_time_str, minutes)
+        )
+
+    async def get_and_delete_expired_timers(self, now_str: str) -> List[Tuple[int, int, int]]:
+        """期限切れタイマーを取得し、取得したものは同時に削除する (rowid, user_id, minutes)"""
+        # まず取得して、IDリストで削除する
+        expired = await self.execute(
+            "SELECT rowid, user_id, minutes FROM personal_timers WHERE end_time <= ?",
+            (now_str,),
+            fetch_all=True
+        )
+        
+        if expired:
+            for rowid, _, _ in expired:
+                await self.execute("DELETE FROM personal_timers WHERE rowid = ?", (rowid,))
+                
+        return expired if expired else []

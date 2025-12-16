@@ -4,6 +4,7 @@ from discord import app_commands
 from datetime import datetime, timedelta
 from utils import safe_message_delete
 from messages import MESSAGES
+from config import Config
 
 TIMER_MAX_MINUTES = 180
 TIMER_CHECK_INTERVAL = 10
@@ -34,14 +35,11 @@ class TimerCog(commands.Cog):
         end_time_str = end_time.isoformat()
         end_time_disp = end_time.strftime('%H:%M')
 
-        await self.bot.db.execute(
-            "INSERT INTO personal_timers VALUES (?, ?, ?)",
-            (interaction.user.id, end_time_str, minutes)
-        )
+        await self.bot.db.add_personal_timer(interaction.user.id, end_time_str, minutes)
 
         msg = timer_msgs.get("set", "⏰ {minutes}分後に通知します。").format(minutes=minutes, end_time=end_time_disp)
         
-        # 設定完了メッセージをEphemeralで返す (通知は時間経過後にDMで届く)
+        # 設定完了メッセージ
         await interaction.response.send_message(f"{msg}\n(時間が来たらDMでお知らせします)", ephemeral=True)
 
 
@@ -57,11 +55,7 @@ class TimerCog(commands.Cog):
         """期限切れのタイマーを確認して通知"""
         now_str = datetime.now().isoformat()
         
-        expired_timers = await self.bot.db.execute(
-            "SELECT rowid, user_id, minutes FROM personal_timers WHERE end_time <= ?",
-            (now_str,),
-            fetch_all=True
-        )
+        expired_timers = await self.bot.db.get_and_delete_expired_timers(now_str)
         
         if not expired_timers:
             return
@@ -82,8 +76,6 @@ class TimerCog(commands.Cog):
                     await user.send(msg)
             except Exception as e:
                 print(f"タイマー通知エラー (User ID: {user_id}): {e}")
-            
-            await self.bot.db.execute("DELETE FROM personal_timers WHERE rowid = ?", (rowid,))
 
 async def setup(bot):
     await bot.add_cog(TimerCog(bot))

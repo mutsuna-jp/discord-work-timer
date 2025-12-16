@@ -3,7 +3,8 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
 from utils import format_duration, speak_in_vc, delete_previous_message, create_embed_from_config
-from messages import MESSAGES, MILESTONES
+from messages import MESSAGES
+from config import Config
 import logging
 
 logger = logging.getLogger(__name__)
@@ -104,7 +105,7 @@ class StudyCog(commands.Cog):
         if member.bot:
             return
 
-        log_channel_id = getattr(self.bot, 'LOG_CHANNEL_ID', 0)
+        log_channel_id = Config.LOG_CHANNEL_ID
         text_channel = self.bot.get_channel(log_channel_id)
         
         was_active = self.is_active(before)
@@ -231,7 +232,7 @@ class StudyCog(commands.Cog):
 
         # 時間の境界をまたいだかチェック
         if prev_hours < current_hours:
-            for hours, role_name in MILESTONES.items():
+            for hours, role_name in Config.MILESTONES.items():
                 # 今回の作業で境界を超えた場合
                 if prev_hours < hours <= current_hours:
                     # ロールを取得して付与

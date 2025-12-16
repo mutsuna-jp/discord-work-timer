@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, time, timezone
 import os
 import asyncio
 import logging
+from config import Config
 from utils import format_duration, delete_previous_message, safe_message_delete, create_embed_from_config
 from messages import MESSAGES
 
@@ -17,11 +18,6 @@ class ReportCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.rank_msg_tracker = {}
-        
-        # 設定値を読み込み (デフォルト値を使用)
-        self.daily_report_hour = getattr(bot, 'DAILY_REPORT_HOUR', 23)
-        self.daily_report_minute = getattr(bot, 'DAILY_REPORT_MINUTE', 59)
-        self.keep_log_days = getattr(bot, 'KEEP_LOG_DAYS', 30)
         self.pending_vc_clears = set()
         
         # タスクを開始
@@ -30,11 +26,11 @@ class ReportCog(commands.Cog):
         self.daily_report_task.start()
 
         # バックアップ: 設定時刻 (23:59)
-        self.backup_task.change_interval(time=time(hour=self.daily_report_hour, minute=self.daily_report_minute, tzinfo=JST))
+        self.backup_task.change_interval(time=time(hour=Config.DAILY_REPORT_HOUR, minute=Config.DAILY_REPORT_MINUTE, tzinfo=JST))
         self.backup_task.start()
 
         # 警告: バックアップ5分前 (23:54)
-        warn_time = time(hour=self.daily_report_hour, minute=max(0, self.daily_report_minute - 5), tzinfo=JST)
+        warn_time = time(hour=Config.DAILY_REPORT_HOUR, minute=max(0, Config.DAILY_REPORT_MINUTE - 5), tzinfo=JST)
         self.warning_task.change_interval(time=warn_time)
         self.warning_task.start()
 
@@ -47,7 +43,6 @@ class ReportCog(commands.Cog):
     @app_commands.default_permissions(send_messages=True)
     async def rank(self, interaction: discord.Interaction):
         """週間ランキングを表示"""
-        # インタラクションへの応答はこれで行う（DM送信するので、ここではEphemeralな応答をする）
         await interaction.response.defer(ephemeral=True)
         
         now = datetime.now()
@@ -55,20 +50,10 @@ class ReportCog(commands.Cog):
         monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
         monday_str = monday.isoformat()
 
-        rows = await self.bot.db.execute(
-            '''SELECT username, SUM(duration_seconds) as total_time
-               FROM study_logs
-               WHERE created_at >= ?
-               GROUP BY user_id
-               ORDER BY total_time DESC
-               LIMIT 10''',
-            (monday_str,),
-            fetch_all=True
-        )
+        rows = await self.bot.db.get_weekly_ranking(monday_str)
 
         if not rows:
             msg = MESSAGES.get("rank", {}).get("empty_message", "データがありません")
-            # Ephemeral (自分だけに見える) メッセージとして送信
             await interaction.followup.send(msg, ephemeral=True)
             return
 
@@ -84,8 +69,6 @@ class ReportCog(commands.Cog):
             rank_text += row_fmt.format(icon=icon, name=username, time=time_str)
         
         embed.add_field(name="Top Members", value=rank_text, inline=False)
-        
-        # Ephemeral (自分だけに見える) メッセージとして送信
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="stats", description="あなたの累計作業時間を表示します")
@@ -96,19 +79,8 @@ class ReportCog(commands.Cog):
 
         user_id = interaction.user.id
         
-        total_result = await self.bot.db.execute(
-            '''SELECT SUM(duration_seconds) FROM study_logs WHERE user_id = ?''',
-            (user_id,),
-            fetch_one=True
-        )
-        total_seconds = total_result[0] if total_result and total_result[0] else 0
-        
-        first_date_result = await self.bot.db.execute(
-            '''SELECT MIN(created_at) FROM study_logs WHERE user_id = ?''',
-            (user_id,),
-            fetch_one=True
-        )
-        first_date_str = first_date_result[0] if first_date_result else None
+        total_seconds = await self.bot.db.get_total_seconds(user_id)
+        first_date_str = await self.bot.db.get_first_log_date(user_id)
 
         time_str = format_duration(total_seconds, for_voice=False)
         
@@ -130,7 +102,6 @@ class ReportCog(commands.Cog):
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         
-        # Ephemeral (自分だけに見える) メッセージとして送信
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="daily_report", description="[管理者用] 日報を手動送信します")
@@ -138,11 +109,7 @@ class ReportCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     async def manual_daily_report(self, interaction: discord.Interaction, days_offset: int = 1):
         """手動で日報を実行"""
-        # BACKUP_CHANNEL_ID ではなく SUMMARY_CHANNEL で実行許可すべきかもしれないが、
-        # 管理者コマンドなので BACKUP_CHANNEL_ID チェックを維持、または管理者のみに制限
-        
-        # 既存ロジックを踏襲してチャンネルチェックを行う
-        backup_channel_id = getattr(self.bot, 'BACKUP_CHANNEL_ID', 0)
+        backup_channel_id = Config.BACKUP_CHANNEL_ID
         if backup_channel_id and interaction.channel_id != backup_channel_id:
             await interaction.response.send_message(
                 f"このコマンドはバックアップチャンネル <#{backup_channel_id}> でのみ実行可能です。",
@@ -163,7 +130,7 @@ class ReportCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     async def manual_backup(self, interaction: discord.Interaction):
         """手動でバックアップを実行"""
-        backup_channel_id = getattr(self.bot, 'BACKUP_CHANNEL_ID', 0)
+        backup_channel_id = Config.BACKUP_CHANNEL_ID
         if backup_channel_id and interaction.channel_id != backup_channel_id:
             await interaction.response.send_message(
                 f"このコマンドはバックアップチャンネル <#{backup_channel_id}> でのみ実行可能です。",
@@ -178,7 +145,6 @@ class ReportCog(commands.Cog):
     @tasks.loop(time=time(hour=7, minute=0, tzinfo=JST))
     async def daily_report_task(self):
         """毎朝7時に前日の日報を送信"""
-        # 前日の日付を取得してレポート
         yesterday = datetime.now() - timedelta(days=1)
         await self.send_daily_report(yesterday)
 
@@ -202,7 +168,6 @@ class ReportCog(commands.Cog):
     @tasks.loop(time=time(hour=23, minute=59, tzinfo=JST))
     async def backup_task(self):
         """毎日バックアップを実行し、ログをクリーンアップ"""
-        # --- 強制切断ロジック ---
         logger.info("日次メンテナンス: ユーザー強制切断を開始...")
         disconnected_count = 0
         for guild in self.bot.guilds:
@@ -218,45 +183,20 @@ class ReportCog(commands.Cog):
         if disconnected_count > 0:
             logger.info(f"{disconnected_count}名のユーザーを切断しました。ログ保存のため10秒待機します...")
             await asyncio.sleep(10)
-        # ----------------------
 
         await self.perform_backup(datetime.now())
 
     async def send_daily_report(self, target_date: datetime):
         """日報Embedを作成して送信"""
-        summary_channel_id = getattr(self.bot, 'SUMMARY_CHANNEL_ID', 0)
-        channel = self.bot.get_channel(summary_channel_id)
+        channel = self.bot.get_channel(Config.SUMMARY_CHANNEL_ID)
         
-        # 指定日の00:00:00
         start_of_day = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
         start_str = start_of_day.isoformat()
-        
-        # 次の日の00:00:00 (範囲指定のため)
-        # ただし元のロジックが created_at >= ? なので、その日以降すべてを含む形になっている。
-        # 論理的には "その日1日分" を出すべきだが、既存ロジックを踏襲するなら "start_of_day以降"
-        # レポートは「前日分」として出すが、実行時点(朝7時)で「昨日0時以降」のデータを集計すると、
-        # 「昨日0時から今(朝7時)まで」が含まれてしまう可能性がある。
-        # しかし study_logs は作業終了時に記録されるはず。深夜作業中のものはまだログになっていない場合が多いか、
-        # あるいは終了した部分だけログになっている。
-        # 既存ロジックは "WHERE created_at >= ?" なので、report実行時点までの全てを集計していた。
-        # 今回、実行タイミングがズレるので、範囲を限定したほうが正確だが、
-        # 簡易的に "翌日7時" に "前日0時以降" を集計すると、深夜0時~7時の分も入ってしまう。
-        # ユーザーの意図としては「前日の日報」なので、本来は range (yesterday 00:00 <= t < today 00:00) が正しい。
-        # 修正案: executeクエリを範囲指定にする。
         
         end_of_day = start_of_day + timedelta(days=1)
         end_str = end_of_day.isoformat()
 
-        rows = await self.bot.db.execute(
-            '''SELECT user_id, username, SUM(duration_seconds) as total_time 
-               FROM study_logs 
-               WHERE created_at >= ? AND created_at < ?
-               GROUP BY user_id 
-               ORDER BY total_time DESC''',
-            (start_str, end_str),
-            fetch_all=True
-        )
-
+        rows = await self.bot.db.get_study_logs_in_range(start_str, end_str)
         today_disp_str = target_date.strftime('%Y/%m/%d')
 
         if channel:
@@ -282,54 +222,29 @@ class ReportCog(commands.Cog):
 
     async def perform_backup(self, now: datetime):
         """バックアップとメンテナンス実行"""
-        # 集計対象は「今日」 (実行は23:59想定なので、今日00:00〜現在までとし、実質今日全域)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_str = today_start.isoformat()
         today_date_str = now.strftime('%Y-%m-%d')
         today_disp_str = now.strftime('%Y/%m/%d')
 
-        # 集計 (保存用)
-        # こちらも念のため範囲指定をしておくが、23:59実行なら >= today_start でほぼ問題ない
-        rows = await self.bot.db.execute(
-            '''SELECT user_id, username, SUM(duration_seconds) as total_time 
-               FROM study_logs 
-               WHERE created_at >= ? 
-               GROUP BY user_id 
-               ORDER BY total_time DESC''',
-            (today_str,),
-            fetch_all=True
-        )
-        
-        # データベースに日報を保存 & クリーンアップ
-        logs_deleted = 0
-        summary_deleted = 0
-        db_size_mb = 0
+        # 集計
+        rows = await self.bot.db.get_study_logs_in_range(today_str)
         
         if rows:
             for user_id, username, total_seconds in rows:
-                await self.bot.db.execute(
-                    '''INSERT OR REPLACE INTO daily_summary (user_id, username, date, total_seconds) 
-                       VALUES (?, ?, ?, ?)''',
-                    (user_id, username, today_date_str, total_seconds)
-                )
+                await self.bot.db.save_daily_summary(user_id, username, today_date_str, total_seconds)
         
-        # 古いDaily Summaryデータを削除
+        # 削除閾値
         cleanup_summary_threshold = now - timedelta(days=365)
         cleanup_summary_threshold_str = cleanup_summary_threshold.strftime('%Y-%m-%d')
-        summary_deleted = await self.bot.db.execute("DELETE FROM daily_summary WHERE date < ?", (cleanup_summary_threshold_str,))
-        if summary_deleted is None:
-            summary_deleted = 0
         
-        # 古いログを削除
-        cleanup_threshold = now - timedelta(days=self.keep_log_days)
-        logs_deleted = await self.bot.db.execute("DELETE FROM study_logs WHERE created_at < ?", (cleanup_threshold.isoformat(),))
-        if logs_deleted is None:
-            logs_deleted = 0
-            
-        # VACUUM を実行
-        await self.bot.db.execute_script("VACUUM")
-        
-        # データベースサイズを監視
+        cleanup_threshold = now - timedelta(days=Config.KEEP_LOG_DAYS)
+        cleanup_threshold_str = cleanup_threshold.isoformat()
+
+        # クリーンアップ実行
+        logs_deleted, summary_deleted = await self.bot.db.cleanup_old_data(cleanup_threshold_str, cleanup_summary_threshold_str)
+
+        # データベースサイズ
         db_path = self.bot.db.db_path
         db_size_bytes = os.path.getsize(db_path) if os.path.exists(db_path) else 0
         db_size_mb = db_size_bytes / (1024 * 1024)
@@ -337,12 +252,10 @@ class ReportCog(commands.Cog):
 
         await self.send_database_backup(today_date_str, today_disp_str, logs_deleted, summary_deleted, db_size_mb)
 
-        # VCチャットのクリーンアップ
         await self.cleanup_vc_chats()
-
+        
         # ログチャンネルのクリーンアップ
-        log_channel_id = getattr(self.bot, 'LOG_CHANNEL_ID', 0)
-        log_channel = self.bot.get_channel(log_channel_id)
+        log_channel = self.bot.get_channel(Config.LOG_CHANNEL_ID)
         if log_channel:
             try:
                 await log_channel.purge(limit=None)
@@ -352,8 +265,7 @@ class ReportCog(commands.Cog):
 
     async def send_database_backup(self, today_date_str, today_disp_str, logs_deleted=0, summary_deleted=0, db_size_mb=0):
         """データベースのバックアップをチャネルに送信"""
-        backup_channel_id = getattr(self.bot, 'BACKUP_CHANNEL_ID', 0)
-        backup_channel = self.bot.get_channel(backup_channel_id)
+        backup_channel = self.bot.get_channel(Config.BACKUP_CHANNEL_ID)
         db_path = self.bot.db.db_path
 
         if backup_channel and os.path.exists(db_path):
@@ -383,7 +295,6 @@ class ReportCog(commands.Cog):
         logger.info("VCチャットのクリーンアップを開始します...")
         for guild in self.bot.guilds:
             for vc in guild.voice_channels:
-                # 権限チェック
                 permissions = vc.permissions_for(guild.me)
                 if not permissions.manage_messages or not permissions.read_messages:
                     continue
@@ -391,7 +302,6 @@ class ReportCog(commands.Cog):
                 if len(vc.members) == 0:
                     try:
                         await vc.purge(limit=None)
-                        # pendingにあれば削除
                         self.pending_vc_clears.discard(vc.id)
                     except Exception as e:
                         logger.error(f"VCチャット削除エラー ({vc.name}): {e}")
@@ -401,7 +311,6 @@ class ReportCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
-        # 退出時にペンディングリストにあるか確認
         if before.channel and before.channel.id in self.pending_vc_clears:
              if len(before.channel.members) == 0:
                  try:
