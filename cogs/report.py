@@ -201,8 +201,12 @@ class ReportCog(commands.Cog):
                                 # 称号チェック
                                 await study_cog.check_and_award_milestones(member, total_seconds, log_channel)
 
-                                # 開始時間を現在時刻に更新（論理分割）
+                                # 論理分割: 保存した分をオフセットに追加し、開始時間を現在に更新
+                                # これにより表示上の「継続時間」は途切れない
+                                current_offset = study_cog.voice_state_offset.get(member.id, 0)
+                                study_cog.voice_state_offset[member.id] = current_offset + total_seconds
                                 study_cog.voice_state_log[member.id] = now
+                                
                                 processed_count += 1
                                 
                             except Exception as e:

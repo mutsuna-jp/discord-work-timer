@@ -23,6 +23,7 @@ class Config:
     BACKUP_CHANNEL_ID = int(os.getenv('BACKUP_CHANNEL_ID', 0))
     STATUS_CHANNEL_ID = int(os.getenv('STATUS_CHANNEL_ID', 0))
     GUILD_ID = os.getenv('GUILD_ID')
+    POMODORO_CHANNEL_ID = int(os.getenv('POMODORO_CHANNEL_ID', 0))
 
     # Application Settings
     DB_PATH = "/data/study_log.db"

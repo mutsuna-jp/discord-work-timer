@@ -64,7 +64,9 @@ class CheerView(discord.ui.View):
 class StudyCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.bot = bot
         self.voice_state_log = {}
+        self.voice_state_offset = {} # Bot再起動前や日次集計前の時間を保持するオフセット
 
     @app_commands.command(name="task", description="現在取り組んでいるタスクを設定します")
     @app_commands.describe(content="タスクの内容")
@@ -103,22 +105,21 @@ class StudyCog(commands.Cog):
         for guild in self.bot.guilds:
             for vc in guild.voice_channels:
                 for member in vc.members:
-                    if not member.bot and self.is_active(member.voice):
                         if member.id not in self.voice_state_log:
                             # デフォルトは現在時刻
                             start_time = datetime.now()
+                            self.voice_state_log[member.id] = start_time
                             
-                            # 直近の停止前ログがあれば、その時間分だけ開始時間を過去にずらす（時間を引き継ぐ）
+                            # 直近の停止前ログがあれば、オフセットとして保持する（開始時間は現在時刻のまま）
                             try:
                                 # 10分(600秒)以内の再起動なら引き継ぎ対象とする
                                 last_duration = await self.bot.db.get_last_session_duration_if_recent(member.id, threshold_seconds=600)
                                 if last_duration > 0:
-                                    start_time = start_time - timedelta(seconds=last_duration)
+                                    self.voice_state_offset[member.id] = last_duration
                                     logger.info(f"復旧: {member.display_name} さんの過去セッション({last_duration}秒)を引き継ぎました")
                             except Exception as e:
                                 logger.error(f"セッション引き継ぎ計算エラー: {e}")
 
-                            self.voice_state_log[member.id] = start_time
                             recovered_count += 1
                             logger.info(f"復旧: {member.display_name} さんの計測を再開しました")
         
@@ -206,6 +207,7 @@ class StudyCog(commands.Cog):
                 else:
                     username = user.display_name
 
+                # 実際に記録すべき時間（オフセットは含まない）
                 duration = now - join_time
                 total_seconds = int(duration.total_seconds())
 
@@ -223,6 +225,7 @@ class StudyCog(commands.Cog):
 
         logger.info(f"合計 {count} 件の作業ログを退避保存しました。")
         self.voice_state_log.clear()
+        self.voice_state_offset.clear()
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
@@ -255,6 +258,10 @@ class StudyCog(commands.Cog):
             await delete_previous_message(text_channel, prev_leave_msg_id)
 
         self.voice_state_log[member.id] = datetime.now()
+        # オフセットはリセット（新規参加なので）
+        if member.id in self.voice_state_offset:
+            del self.voice_state_offset[member.id]
+            
         today_sec = await self.bot.db.get_today_seconds(member.id)
         time_str_text = format_duration(today_sec, for_voice=False)
         time_str_speak = format_duration(today_sec, for_voice=True)
@@ -317,13 +324,18 @@ class StudyCog(commands.Cog):
         if text_channel:
             await delete_previous_message(text_channel, prev_join_msg_id)
 
-        total_seconds_session = 0 # セッション時間の初期化
+        total_seconds_session = 0 # 今回のセッションで保存すべき時間（DB保存用）
+        total_seconds_display = 0 # 表示用（オフセット込み）
 
         if member.id in self.voice_state_log:
             join_time = self.voice_state_log[member.id]
             leave_time = datetime.now()
             duration = leave_time - join_time
             total_seconds_session = int(duration.total_seconds())
+            
+            # オフセット取得
+            offset = self.voice_state_offset.get(member.id, 0)
+            total_seconds_display = total_seconds_session + offset
 
             await self.bot.db.add_study_log(
                 member.id, 
@@ -334,13 +346,15 @@ class StudyCog(commands.Cog):
             )
             
             del self.voice_state_log[member.id]
+            if member.id in self.voice_state_offset:
+                del self.voice_state_offset[member.id]
         
-        # 称号バッジ付与チェック
+        # 称号バッジ付与チェック (表示用の合計時間ではなく、今回増えた分を渡すのが適切だが、
+        # check_and_award_milestones 内の実装を見ると「現在の累計 - session」と比較しているので
+        # 今回DBに追加された total_seconds_session を渡すのが正しい)
         await self.check_and_award_milestones(member, total_seconds_session, text_channel)
 
-
-
-        current_str = format_duration(total_seconds_session, for_voice=False) # 変数名を合わせました
+        current_str = format_duration(total_seconds_display, for_voice=False) # 表示用時間を使用
         today_sec = await self.bot.db.get_today_seconds(member.id)
         total_str = format_duration(today_sec, for_voice=False)
         

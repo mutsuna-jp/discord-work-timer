@@ -122,7 +122,9 @@ class StatusCog(commands.Cog):
                 # 経過時間を計算
                 now = datetime.now()
                 duration = now - start_time
-                total_seconds = int(duration.total_seconds())
+                # オフセット取得 (再起動前や論理分割前の時間)
+                offset = study_cog.voice_state_offset.get(user_id, 0)
+                total_seconds = int(duration.total_seconds()) + offset
                 
                 hours = total_seconds // 3600
                 minutes = (total_seconds % 3600) // 60
