@@ -38,8 +38,20 @@ class StatusCog(commands.Cog):
                 try:
                     channel = await self.bot.fetch_channel(channel_id)
                 except Exception:
-                    logger.warning(f"ステータスチャンネルが見つかりません: {channel_id}")
+                    logger.warning(f"ステータスボード更新: チャンネルが見つかりません: {channel_id}")
                     return
+
+            # 権限チェック
+            permissions = channel.permissions_for(channel.guild.me)
+            if not permissions.view_channel:
+                logger.warning(f"ステータスボード更新: チャンネル {channel.id} を閲覧する権限がありません。")
+                return
+            if not permissions.send_messages:
+                logger.warning(f"ステータスボード更新: チャンネル {channel.id} にメッセージを送信する権限がありません。")
+                return
+            if not permissions.read_message_history:
+                logger.warning(f"ステータスボード更新: チャンネル {channel.id} のメッセージ履歴を読む権限がありません（重複防止のために必要です）。")
+                return
 
             study_cog = self.bot.get_cog("StudyCog")
             if not study_cog:
@@ -136,6 +148,8 @@ class StatusCog(commands.Cog):
                     await target_message.edit(embed=embed)
                 else:
                     await channel.send(embed=embed)
+            except discord.Forbidden:
+                logger.error(f"ステータスボード更新エラー: 権限不足のためメッセージの送信または編集ができませんでした。(Channel ID: {channel.id})")
             except Exception as e:
                 logger.error(f"ステータスボードの更新に失敗しました: {e}")
 
