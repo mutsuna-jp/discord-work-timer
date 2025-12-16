@@ -157,8 +157,8 @@ class ReportCog(commands.Cog):
                     if not member.bot:
                         try:
                             embed = discord.Embed(
-                                title="⚠️ 自動切断のお知らせ",
-                                description="5分後 (23:59) に日次メンテナンスのため自動的にボイスチャットから切断されます。\n作業時間は自動的に記録されます。",
+                                title="🕒 日次集計のお知らせ",
+                                description="まもなく (23:59) 本日の作業時間の集計が行われます。\n通話はそのまま継続してご利用いただけます。",
                                 color=0xFFFF00
                             )
                             await member.send(embed=embed)
@@ -167,22 +167,51 @@ class ReportCog(commands.Cog):
 
     @tasks.loop(time=time(hour=23, minute=59, tzinfo=JST))
     async def backup_task(self):
-        """毎日バックアップを実行し、ログをクリーンアップ"""
-        logger.info("日次メンテナンス: ユーザー強制切断を開始...")
-        disconnected_count = 0
-        for guild in self.bot.guilds:
-            for vc in guild.voice_channels:
-                for member in vc.members:
-                    if not member.bot:
-                        try:
-                            await member.move_to(None)
-                            disconnected_count += 1
-                        except Exception as e:
-                            logger.error(f"強制切断エラー ({member.display_name}): {e}")
+        """毎日バックアップを実行し、ログをクリーンアップ (ソフトメンテナンス)"""
+        logger.info("日次メンテナンス: 日次集計処理を開始...")
         
-        if disconnected_count > 0:
-            logger.info(f"{disconnected_count}名のユーザーを切断しました。ログ保存のため10秒待機します...")
-            await asyncio.sleep(10)
+        study_cog = self.bot.get_cog("StudyCog")
+        log_channel = self.bot.get_channel(Config.LOG_CHANNEL_ID)
+        now = datetime.now()
+        processed_count = 0
+
+        if study_cog:
+            for guild in self.bot.guilds:
+                for vc in guild.voice_channels:
+                    for member in vc.members:
+                        if member.bot:
+                            continue
+                        
+                        # 記録中のユーザーのみ処理
+                        if member.id in study_cog.voice_state_log:
+                            try:
+                                join_time = study_cog.voice_state_log[member.id]
+                                duration = now - join_time
+                                total_seconds = int(duration.total_seconds())
+                                
+                                # セッション保存
+                                await self.bot.db.add_study_log(
+                                    member.id,
+                                    member.display_name,
+                                    join_time,
+                                    total_seconds,
+                                    now
+                                )
+                                
+                                # 称号チェック
+                                await study_cog.check_and_award_milestones(member, total_seconds, log_channel)
+
+                                # 開始時間を現在時刻に更新（論理分割）
+                                study_cog.voice_state_log[member.id] = now
+                                processed_count += 1
+                                
+                            except Exception as e:
+                                logger.error(f"日次集計エラー ({member.display_name}): {e}")
+            
+            if processed_count > 0:
+                logger.info(f"{processed_count}名のセッションを分割しました。")
+        else:
+            logger.error("StudyCogが見つかりません。セッション分割をスキップします。")
 
         await self.perform_backup(datetime.now())
 

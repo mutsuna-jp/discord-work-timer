@@ -21,7 +21,7 @@ class CheerView(discord.ui.View):
     async def cheer(self, interaction: discord.Interaction, button: discord.ui.Button):
         # 自分自身への応援はブロック
         if interaction.user.id == self.target_member.id:
-            await interaction.response.send_message("自分自身は応援できません（気持ちは分かります！）", ephemeral=True)
+            await interaction.response.send_message("自分自身は応援できません", ephemeral=True)
             return
 
         # すでに応援済みかチェック
