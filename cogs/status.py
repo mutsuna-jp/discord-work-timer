@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands, tasks
 from datetime import datetime
 from config import Config
+from messages import Colors
 import logging
 import asyncio
 
@@ -99,7 +100,7 @@ class StatusCog(commands.Cog):
             header_embed = discord.Embed(
                 title=f"現在の作業状況 (最終更新 {now_str})", 
                 description=f"人数: **{len(active_users)}** 名",
-                color=0x00FF00
+                color=Colors.GREEN
             )
             all_embeds.append(header_embed)
             
@@ -133,7 +134,7 @@ class StatusCog(commands.Cog):
                 
                 user_embed = discord.Embed(
                     description=f" {task} ({time_str})",
-                    color=0x00FF00
+                    color=Colors.GREEN
                 )
                 user_embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
                 all_embeds.append(user_embed)

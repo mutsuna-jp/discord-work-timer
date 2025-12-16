@@ -30,6 +30,10 @@ class Config:
     DAILY_REPORT_HOUR = 23
     DAILY_REPORT_MINUTE = 59
 
+    # Timer Settings
+    TIMER_MAX_MINUTES = 180
+    TIMER_CHECK_INTERVAL = 10
+
     # Milestones (Hours: Role Name)
     MILESTONES = {
         10: "🥉 10時間達成",

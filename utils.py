@@ -3,6 +3,7 @@ import asyncio
 import discord
 import edge_tts
 import logging
+from messages import Colors
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ def create_embed_from_config(config, **kwargs):
         except Exception:
             pass
 
-    color = config.get("embed_color", 0x808080)
+    color = config.get("embed_color", Colors.GRAY)
 
     embed = discord.Embed(title=title, description=desc, color=color)
     

@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import datetime, timedelta
 from utils import format_duration, speak_in_vc, delete_previous_message, create_embed_from_config
-from messages import MESSAGES
+from messages import MESSAGES, Colors
 from config import Config
 import logging
 
@@ -78,6 +78,14 @@ class StudyCog(commands.Cog):
         status_cog = self.bot.get_cog("StatusCog")
         if status_cog:
             await status_cog.update_status_board()
+
+    @app_commands.command(name="reading", description="読み上げ用の名前(読み仮名)を設定します")
+    @app_commands.describe(name="読み上げに使用する名前")
+    @app_commands.default_permissions(send_messages=True)
+    async def reading(self, interaction: discord.Interaction, name: str):
+        """読み仮名設定コマンド"""
+        await self.bot.db.set_user_reading(interaction.user.id, name)
+        await interaction.response.send_message(f"読み上げ名を設定しました: **{name}**", ephemeral=True)
 
     def is_active(self, voice_state):
         """ユーザーが実際にVCで活動中か判定"""
@@ -256,6 +264,10 @@ class StudyCog(commands.Cog):
         task_name = user_task if user_task else "作業"
         streak_days = await self.bot.db.get_user_streak(member.id)
 
+        # Reading support
+        user_reading = await self.bot.db.get_user_reading(member.id)
+        speak_name = user_reading if user_reading else member.display_name
+
         msg_type = "join" if before.channel is None else "resume"
         
         if text_channel:
@@ -280,14 +292,14 @@ class StudyCog(commands.Cog):
             
             try:
                 speak_text = msg_fmt.format(
-                    name=member.display_name, 
+                    name=speak_name, 
                     task=task_name, 
                     days=streak_days, 
                     current_total=time_str_speak
                 )
             except Exception as e:
                 logger.error(f"音声メッセージフォーマットエラー: {e}")
-                speak_text = f"{member.display_name}さんが作業を始めました。"
+                speak_text = f"{speak_name}さんが作業を始めました。"
 
             self.bot.loop.create_task(speak_in_vc(after.channel, speak_text, member.id))
 
@@ -382,7 +394,7 @@ class StudyCog(commands.Cog):
                                 embed = discord.Embed(
                                     title="🎉 称号獲得！",
                                     description=f"{member.mention}さんが **{role_name}** の称号を獲得しました！\nおめでとうございます！👏👏",
-                                    color=0xFFD700
+                                    color=Colors.GOLD
                                 )
                                 await text_channel.send(embed=embed)
                         except discord.Forbidden:

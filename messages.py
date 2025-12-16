@@ -1,6 +1,20 @@
 # メッセージ管理ファイル
 
 
+
+class Colors:
+    GREEN = 0x00FF00
+    RED = 0xFF0000
+    BLUE = 0x00BFFF # Deep Sky Blue
+    GOLD = 0xFFD700
+    PURPLE = 0x9932CC
+    ORANGE = 0xFF4500
+    YELLOW = 0xFFA500
+    PINK = 0xFF69B4
+    GRAY = 0x808080
+    DARK_GRAY = 0x36393F
+    NAVY = 0x000080
+
 MESSAGES = {
     # ---------------------------
     # 👋 入室時
@@ -8,7 +22,7 @@ MESSAGES = {
     "join": {
         "message": "{name}さんが{task}を始めました。",
         "embed_title": "🚀 {task}スタート！",
-        "embed_color": 0x00FF00, # 緑色
+        "embed_color": Colors.GREEN, # 緑色
         "fields": [
             {"name": "", "value": "{days}日継続中！"},
             {"name": "", "value": "**{current_total}**～"}
@@ -20,7 +34,7 @@ MESSAGES = {
     # ---------------------------
     "leave": {
         "embed_title": "🍵 お疲れ様でした",
-        "embed_color": 0x00BFFF, # 水色
+        "embed_color": Colors.BLUE, # 水色
         "fields": [
             {"name": "今回の記録", "value": "**{time}**"},
             {"name": "本日の総記録", "value": "**{total}**"}
@@ -34,7 +48,7 @@ MESSAGES = {
         "empty_message": "今週はまだ誰も作業していません...！一番乗りを目指しましょう！🏃‍♂️",
         "embed_title": "🏆 今週の作業時間ランキング",
         "embed_desc": "",
-        "embed_color": 0xFFD700, # 金色
+        "embed_color": Colors.GOLD, # 金色
         "row": "{icon} **{name}**: {time}\n"
     },
 
@@ -44,7 +58,7 @@ MESSAGES = {
     "stats": {
         "embed_title": "📊 {name} さんの通算記録",
         "embed_desc": "",
-        "embed_color": 0x9932CC, # 紫色
+        "embed_color": Colors.PURPLE, # 紫色
         "fields": [
             {"name": "⏳ 累計作業時間", "value": "**{total_time}**"},
             {"name": "📅 計測開始日", "value": "{date} ({days}日前)"}
@@ -57,7 +71,7 @@ MESSAGES = {
     "resume": {
         "message": "{name}さん、作業再開です。",
         "embed_title": "🔥 作業再開！",
-        "embed_color": 0xFF4500, # オレンジ色
+        "embed_color": Colors.ORANGE, # オレンジ色
         "fields": [{"name": "今日の記録", "value": "**{current_total}**"}]
     },
 
@@ -66,7 +80,7 @@ MESSAGES = {
     # ---------------------------
     "break": {
         "embed_title": "☕ 休憩中...",
-        "embed_color": 0xFFA500, # 黄色
+        "embed_color": Colors.YELLOW, # 黄色
         "fields": [
             {"name": "今回の記録", "value": "**{time}**"},
             {"name": "本日の総記録", "value": "**{total}**"}
@@ -80,7 +94,7 @@ MESSAGES = {
         "empty_message": "今日は誰も作業しませんでした...明日は頑張りましょう！🛌",
         "embed_title": "📅 本日の作業レポート ({date})",
         "embed_desc": "昨日の成果です✨",
-        "embed_color": 0xFF69B4, # ピンク色
+        "embed_color": Colors.PINK, # ピンク色
         "row": "• **{name}**: {time}\n"
     },
 
@@ -100,12 +114,15 @@ MESSAGES = {
     "help": {
         "embed_title": "📖 ボットの使い方",
         "embed_desc": "作業通話を記録・応援するボットです。\nVCに入ると自動で計測が始まります。",
-        "embed_color": 0x808080, # グレー
+        "embed_color": Colors.GRAY, # グレー
         "commands": [
             ("🏆 `/rank`", "今週の作業時間ランキングを表示します。"),
             ("📊 `/stats`", "あなたのこれまでの累計作業時間を表示します。"),
+            ("📝 `/task [内容]`", "現在取り組んでいるタスク内容を設定します。"),
+            ("🗣️ `/reading [名前]`", "読み上げ用の名前(読み仮名)を設定します。"),
             ("⏰ `/timer [分]`", "個人用タイマーをセットします。"),
-            ("✏️ `/add`", "時間を手動で修正します（管理者のみ）。")
+            ("✏️ `/add`", "[管理者] 時間を手動で修正します。"),
+            ("🗑️ `/clear_log`", "[管理者] ログチャンネルを掃除します。")
         ]
     }
 }

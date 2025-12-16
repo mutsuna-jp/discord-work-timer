@@ -57,6 +57,8 @@ class Database:
                          (user_id INTEGER PRIMARY KEY, join_msg_id INTEGER, leave_msg_id INTEGER)''')
             await db.execute('''CREATE TABLE IF NOT EXISTS user_tasks
                          (user_id INTEGER PRIMARY KEY, task_content TEXT)''')
+            await db.execute('''CREATE TABLE IF NOT EXISTS user_readings
+                         (user_id INTEGER PRIMARY KEY, reading TEXT)''')
             
             await db.execute('''CREATE INDEX IF NOT EXISTS idx_study_logs_user_created 
                          ON study_logs(user_id, created_at)''')
@@ -167,6 +169,22 @@ class Database:
         await self.execute(
             '''INSERT OR REPLACE INTO user_tasks (user_id, task_content) VALUES (?, ?)''',
             (user_id, task_content)
+        )
+
+    async def get_user_reading(self, user_id: int) -> Optional[str]:
+        """ユーザーの読み方を取得"""
+        result = await self.execute(
+            '''SELECT reading FROM user_readings WHERE user_id = ?''',
+            (user_id,),
+            fetch_one=True
+        )
+        return result[0] if result else None
+
+    async def set_user_reading(self, user_id: int, reading: str) -> None:
+        """ユーザーの読み方を設定"""
+        await self.execute(
+            '''INSERT OR REPLACE INTO user_readings (user_id, reading) VALUES (?, ?)''',
+            (user_id, reading)
         )
 
     async def get_weekly_ranking(self, start_date: str) -> List[Tuple[str, int]]:

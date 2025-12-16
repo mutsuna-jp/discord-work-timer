@@ -6,6 +6,7 @@ import sys
 import logging
 from config import Config
 from database import Database
+from messages import Colors
 
 logger = logging.getLogger("main")
 
@@ -53,15 +54,15 @@ class WorkTimerBot(commands.Bot):
                 guild = discord.Object(id=int(guild_id))
                 self.tree.copy_global_to(guild=guild)
                 synced = await self.tree.sync(guild=guild)
-                print(f'Synced {len(synced)} command(s) to guild {guild_id}.')
+                logger.info(f'Synced {len(synced)} command(s) to guild {guild_id}.')
                 
                 # 重複回避のため、グローバルコマンドを削除する
                 self.tree.clear_commands(guild=None)
                 await self.tree.sync()
-                print('Cleared global commands to prevent duplicates.')
+                logger.info('Cleared global commands to prevent duplicates.')
             else:
                 synced = await self.tree.sync()
-                print(f'Synced {len(synced)} command(s) globally.')
+                logger.info(f'Synced {len(synced)} command(s) globally.')
         except Exception as e:
             logger.error(f'Failed to sync commands: {e}')
 
@@ -77,13 +78,13 @@ class WorkTimerBot(commands.Bot):
             embed = discord.Embed(
                 title="✅ システム起動完了",
                 description="再起動が完了しました。\nコマンドおよび入退室の記録機能が利用可能です。",
-                color=0x00FF00 # 緑色
+                color=Colors.GREEN
             )
             await channel.send(embed=embed)
 
     async def close(self):
         """Bot停止時に実行される処理"""
-        print("Botの停止処理を開始します...")
+        logger.info("Botの停止処理を開始します...")
         try:
             # 終了通知
             channel_id = Config.LOG_CHANNEL_ID
@@ -94,21 +95,21 @@ class WorkTimerBot(commands.Bot):
                 try:
                     channel = await self.fetch_channel(channel_id)
                 except Exception as e:
-                    print(f"チャンネル情報取得エラー (ID: {channel_id}): {e}")
+                    logger.error(f"チャンネル情報取得エラー (ID: {channel_id}): {e}")
 
             if channel:
                 embed = discord.Embed(
                     title="⚠️ システム停止",
                     description="メンテナンスのため一時的にシステムを停止します。\n**再起動するまでの間、記録は停止します。**",
-                    color=0xFF0000 # 赤色
+                    color=Colors.RED
                 )
                 await channel.send(embed=embed)
-                print("終了通知を送信しました。")
+                logger.info("終了通知を送信しました。")
             else:
-                print(f"通知先のチャンネルが見つかりません (ID: {channel_id})")
+                logger.warning(f"通知先のチャンネルが見つかりません (ID: {channel_id})")
                 
         except Exception as e:
-            print(f"終了通知送信エラー: {e}")
+            logger.error(f"終了通知送信エラー: {e}")
         
         # ▼ 追加: セッションの保存 ▼
         study_cog = self.get_cog("StudyCog")
@@ -116,20 +117,20 @@ class WorkTimerBot(commands.Bot):
             try:
                 await study_cog.save_all_sessions()
             except Exception as e:
-                print(f"セッション保存エラー: {e}")
+                logger.error(f"セッション保存エラー: {e}")
         
         # 本来の終了処理を実行
         await super().close()
 
 if __name__ == '__main__':
     if not Config.TOKEN:
-        print("エラー: DISCORD_BOT_TOKEN 環境変数が設定されていません。")
+        logger.error("エラー: DISCORD_BOT_TOKEN 環境変数が設定されていません。")
     else:
         bot = WorkTimerBot()
 
         # ▼▼▼ 追加: 停止シグナルを強制的にキャッチする処理 ▼▼▼
         def force_close(signum, frame):
-            print(f"🛑 停止シグナル ({signum}) を受信しました。終了処理を強制実行します。")
+            logger.info(f"🛑 停止シグナル ({signum}) を受信しました。終了処理を強制実行します。")
             # KeyboardInterruptを発生させることで、下の except ブロックに飛ばし、
             # discord.py の終了処理フローに乗せます。
             raise KeyboardInterrupt
@@ -138,15 +139,15 @@ if __name__ == '__main__':
         signal.signal(signal.SIGTERM, force_close)
         # ▲▲▲ 追加終了 ▲▲▲
 
-        print("🚀 Botプロセスを開始します...")
+        logger.info("🚀 Botプロセスを開始します...")
         try:
             bot.run(Config.TOKEN)
         except KeyboardInterrupt:
-            print("🛑 KeyboardInterruptを受信しました。終了処理へ移行します。")
+            logger.info("🛑 KeyboardInterruptを受信しました。終了処理へ移行します。")
             # bot.run() は KeyboardInterrupt で抜けると自動的に cleanup を行いますが、
             # 念のためここで明示的な close は不要です（二重実行になるため）
         except SystemExit:
-            print("🛑 SystemExitを受信しました。終了します。")
+            logger.info("🛑 SystemExitを受信しました。終了します。")
         except Exception as e:
             logger.critical(f"🛑 実行中にエラーが発生しました: {e}")
         finally:

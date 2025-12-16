@@ -7,7 +7,7 @@ import asyncio
 import logging
 from config import Config
 from utils import format_duration, delete_previous_message, safe_message_delete, create_embed_from_config
-from messages import MESSAGES
+from messages import MESSAGES, Colors
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +159,7 @@ class ReportCog(commands.Cog):
                             embed = discord.Embed(
                                 title="🕒 日次集計のお知らせ",
                                 description="まもなく (23:59) 本日の作業時間の集計が行われます。\n通話はそのまま継続してご利用いただけます。",
-                                color=0xFFFF00
+                                color=Colors.YELLOW
                             )
                             await member.send(embed=embed)
                         except Exception as e:
@@ -302,7 +302,7 @@ class ReportCog(commands.Cog):
                 embed = discord.Embed(
                     title="🔒 データベース自動バックアップ",
                     description=f"{today_disp_str} の日次バックアップとクリーンアップを実行しました",
-                    color=0x36393F
+                    color=Colors.DARK_GRAY
                 )
                 
                 cleanup_info = f"""**スタディログ削除:** {logs_deleted}件

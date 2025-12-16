@@ -5,9 +5,9 @@ from datetime import datetime, timedelta
 from utils import safe_message_delete
 from messages import MESSAGES
 from config import Config
+import logging
 
-TIMER_MAX_MINUTES = 180
-TIMER_CHECK_INTERVAL = 10
+logger = logging.getLogger(__name__)
 
 class TimerCog(commands.Cog):
     def __init__(self, bot):
@@ -26,7 +26,7 @@ class TimerCog(commands.Cog):
             await interaction.response.send_message(msg, ephemeral=True)
             return
         
-        if minutes > TIMER_MAX_MINUTES:
+        if minutes > Config.TIMER_MAX_MINUTES:
             msg = timer_msgs.get("too_long", "⚠️ タイマーは長すぎます。")
             await interaction.response.send_message(msg, ephemeral=True)
             return
@@ -50,7 +50,7 @@ class TimerCog(commands.Cog):
         """タイマーコマンド"""
         await self.set_personal_timer(interaction, minutes)
 
-    @tasks.loop(seconds=TIMER_CHECK_INTERVAL)
+    @tasks.loop(seconds=Config.TIMER_CHECK_INTERVAL)
     async def check_timers_task(self):
         """期限切れのタイマーを確認して通知"""
         now_str = datetime.now().isoformat()
@@ -75,7 +75,7 @@ class TimerCog(commands.Cog):
                     msg = timer_msgs.get("finish", "⏰ {minutes}分が経過しました！").format(minutes=minutes)
                     await user.send(msg)
             except Exception as e:
-                print(f"タイマー通知エラー (User ID: {user_id}): {e}")
+                logger.error(f"タイマー通知エラー (User ID: {user_id}): {e}")
 
 async def setup(bot):
     await bot.add_cog(TimerCog(bot))
