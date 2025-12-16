@@ -2,6 +2,9 @@ import os
 import asyncio
 import discord
 import edge_tts
+import logging
+
+logger = logging.getLogger(__name__)
 
 VOICE_NAME = "ja-JP-NanamiNeural"
 FFMPEG_CLEANUP_DELAY = 1
@@ -41,18 +44,18 @@ async def speak_in_vc(voice_channel, text, member_id):
             await vc.disconnect()
             
     except Exception as e:
-        print(f"音声読み上げエラー: {e}")
+        logger.error(f"音声読み上げエラー: {e}")
         try:
             if voice_channel.guild.voice_client:
                 await voice_channel.guild.voice_client.disconnect()
         except Exception as disconnect_error:
-            print(f"VC切断エラー: {disconnect_error}")
+            logger.error(f"VC切断エラー: {disconnect_error}")
     finally:
         if os.path.exists(filename):
             try:
                 os.remove(filename)
             except Exception as e:
-                print(f"ファイル削除エラー: {e}")
+                logger.error(f"ファイル削除エラー: {e}")
 
 async def safe_message_delete(message):
     """権限がない場合もスキップするメッセージ削除"""
@@ -60,11 +63,11 @@ async def safe_message_delete(message):
         try:
             await message.delete()
         except discord.Forbidden:
-            print(f"メッセージ削除失敗: 権限不足 (Manage Messages) - Channel: {message.channel.name}")
+            logger.warning(f"メッセージ削除失敗: 権限不足 (Manage Messages) - Channel: {message.channel.name}")
         except discord.NotFound:
             pass
         except Exception as e:
-            print(f"メッセージ削除エラー: {e}")
+            logger.error(f"メッセージ削除エラー: {e}")
 
 async def delete_previous_message(channel, message_id):
     """チャネルの前のメッセージを削除"""
@@ -75,7 +78,7 @@ async def delete_previous_message(channel, message_id):
         except discord.NotFound:
             pass 
         except Exception as e:
-            print(f"メッセージ削除エラー: {e}")
+            logger.error(f"メッセージ削除エラー: {e}")
 
 def create_embed_from_config(config, **kwargs):
     """設定辞書からEmbedを安全に生成"""

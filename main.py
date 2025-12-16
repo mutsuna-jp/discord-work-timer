@@ -4,7 +4,16 @@ import os
 import asyncio
 import signal
 import sys
+import logging
 from dotenv import load_dotenv
+
+# ロギング設定
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger("main")
 from database import Database
 
 # .env ファイルをロード (ローカル開発用)
@@ -58,9 +67,9 @@ class WorkTimerBot(commands.Bot):
         for extension in initial_extensions:
             try:
                 await self.load_extension(extension)
-                print(f'Loaded extension: {extension}')
+                logger.info(f'Loaded extension: {extension}')
             except Exception as e:
-                print(f'Failed to load extension {extension}: {e}')
+                logger.error(f'Failed to load extension {extension}: {e}')
         
         # コマンドツリーの同期
         # 注意: グローバル同期は反映に時間がかかる場合があります (最大1時間)
@@ -82,10 +91,10 @@ class WorkTimerBot(commands.Bot):
                 synced = await self.tree.sync()
                 print(f'Synced {len(synced)} command(s) globally.')
         except Exception as e:
-            print(f'Failed to sync commands: {e}')
+            logger.error(f'Failed to sync commands: {e}')
 
     async def on_ready(self):
-        print(f'ログインしました: {self.user}')
+        logger.info(f'ログインしました: {self.user}')
         
         # 1. ステータスの変更（「作業時間を記録中」と表示され、稼働中か一目でわかります）
         await self.change_presence(activity=discord.Game(name="作業時間を記録中"))
@@ -159,6 +168,6 @@ if __name__ == '__main__':
         except SystemExit:
             print("🛑 SystemExitを受信しました。終了します。")
         except Exception as e:
-            print(f"🛑 実行中にエラーが発生しました: {e}")
+            logger.critical(f"🛑 実行中にエラーが発生しました: {e}")
         finally:
-            print("🏁 プロセスが完全に終了しました。")
+            logger.info("🏁 プロセスが完全に終了しました。")

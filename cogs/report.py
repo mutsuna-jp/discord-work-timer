@@ -4,8 +4,11 @@ from discord import app_commands
 from datetime import datetime, timedelta, time, timezone
 import os
 import asyncio
+import logging
 from utils import format_duration, delete_previous_message, safe_message_delete, create_embed_from_config
 from messages import MESSAGES
+
+logger = logging.getLogger(__name__)
 
 # JSTの定義
 JST = timezone(timedelta(hours=9))
@@ -194,13 +197,13 @@ class ReportCog(commands.Cog):
                             )
                             await member.send(embed=embed)
                         except Exception as e:
-                            print(f"DM送信失敗 ({member.display_name}): {e}")
+                            logger.error(f"DM送信失敗 ({member.display_name}): {e}")
 
     @tasks.loop(time=time(hour=23, minute=59, tzinfo=JST))
     async def backup_task(self):
         """毎日バックアップを実行し、ログをクリーンアップ"""
         # --- 強制切断ロジック ---
-        print("日次メンテナンス: ユーザー強制切断を開始...")
+        logger.info("日次メンテナンス: ユーザー強制切断を開始...")
         disconnected_count = 0
         for guild in self.bot.guilds:
             for vc in guild.voice_channels:
@@ -210,10 +213,10 @@ class ReportCog(commands.Cog):
                             await member.move_to(None)
                             disconnected_count += 1
                         except Exception as e:
-                            print(f"強制切断エラー ({member.display_name}): {e}")
+                            logger.error(f"強制切断エラー ({member.display_name}): {e}")
         
         if disconnected_count > 0:
-            print(f"{disconnected_count}名のユーザーを切断しました。ログ保存のため10秒待機します...")
+            logger.info(f"{disconnected_count}名のユーザーを切断しました。ログ保存のため10秒待機します...")
             await asyncio.sleep(10)
         # ----------------------
 
@@ -330,7 +333,7 @@ class ReportCog(commands.Cog):
         db_path = self.bot.db.db_path
         db_size_bytes = os.path.getsize(db_path) if os.path.exists(db_path) else 0
         db_size_mb = db_size_bytes / (1024 * 1024)
-        print(f"📊 DBクリーンアップ完了 - スタディログ削除: {logs_deleted}件, DB容量: {db_size_mb:.2f} MB")
+        logger.info(f"📊 DBクリーンアップ完了 - スタディログ削除: {logs_deleted}件, DB容量: {db_size_mb:.2f} MB")
 
         await self.send_database_backup(today_date_str, today_disp_str, logs_deleted, summary_deleted, db_size_mb)
 
@@ -343,9 +346,9 @@ class ReportCog(commands.Cog):
         if log_channel:
             try:
                 await log_channel.purge(limit=None)
-                print(f"ログチャンネル {log_channel.name} をクリーンアップしました。")
+                logger.info(f"ログチャンネル {log_channel.name} をクリーンアップしました。")
             except Exception as e:
-                print(f"ログチャンネル削除エラー: {e}")
+                logger.error(f"ログチャンネル削除エラー: {e}")
 
     async def send_database_backup(self, today_date_str, today_disp_str, logs_deleted=0, summary_deleted=0, db_size_mb=0):
         """データベースのバックアップをチャネルに送信"""
@@ -371,13 +374,13 @@ class ReportCog(commands.Cog):
                 backup_filename = f"backup_{today_date_str}.db"
                 file = discord.File(db_path, filename=backup_filename)
                 await backup_channel.send(embed=embed, file=file)
-                print("バックアップ送信完了")
+                logger.info("バックアップ送信完了")
             except Exception as e:
-                print(f"バックアップ送信エラー: {e}")
+                logger.error(f"バックアップ送信エラー: {e}")
 
     async def cleanup_vc_chats(self):
         """全てのVCチャットをクリーンアップ（人がいる場合は待機）"""
-        print("VCチャットのクリーンアップを開始します...")
+        logger.info("VCチャットのクリーンアップを開始します...")
         for guild in self.bot.guilds:
             for vc in guild.voice_channels:
                 # 権限チェック
@@ -391,10 +394,10 @@ class ReportCog(commands.Cog):
                         # pendingにあれば削除
                         self.pending_vc_clears.discard(vc.id)
                     except Exception as e:
-                        print(f"VCチャット削除エラー ({vc.name}): {e}")
+                        logger.error(f"VCチャット削除エラー ({vc.name}): {e}")
                 else:
                     self.pending_vc_clears.add(vc.id)
-                    print(f"VCチャット削除待機 ({vc.name}): {len(vc.members)}名が参加中")
+                    logger.info(f"VCチャット削除待機 ({vc.name}): {len(vc.members)}名が参加中")
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
@@ -402,10 +405,10 @@ class ReportCog(commands.Cog):
         if before.channel and before.channel.id in self.pending_vc_clears:
              if len(before.channel.members) == 0:
                  try:
-                     print(f"参加者がいなくなったため、チャットを削除します: {before.channel.name}")
+                     logger.info(f"参加者がいなくなったため、チャットを削除します: {before.channel.name}")
                      await before.channel.purge(limit=None)
                  except Exception as e:
-                     print(f"VCチャット削除エラー ({before.channel.name}): {e}")
+                     logger.error(f"VCチャット削除エラー ({before.channel.name}): {e}")
                  finally:
                      self.pending_vc_clears.discard(before.channel.id)
 

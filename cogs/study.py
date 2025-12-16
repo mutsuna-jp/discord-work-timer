@@ -3,17 +3,12 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
 from utils import format_duration, speak_in_vc, delete_previous_message, create_embed_from_config
-from messages import MESSAGES
+from messages import MESSAGES, MILESTONES
+import logging
 
-# 👇 マイルストーン設定（時間: "ロール名"）
-# Discordサーバー側でもこれと同じ名前のロールを作成してください！
-MILESTONES = {
-    10: "🥉 10時間達成",
-    50: "🥈 50時間達成",
-    100: "🥇 100時間達成",
-    500: "🏆 500時間達成",
-    1000: "👑 レジェンド"
-}
+logger = logging.getLogger(__name__)
+
+
 
 class CheerView(discord.ui.View):
     def __init__(self, target_member):
@@ -88,7 +83,7 @@ class StudyCog(commands.Cog):
 
     async def recover_voice_sessions(self):
         """ボット再起動時にVCセッションを復旧"""
-        print("現在のVC状態を確認中...")
+        logger.info("現在のVC状態を確認中...")
         recovered_count = 0
         
         for guild in self.bot.guilds:
@@ -98,10 +93,10 @@ class StudyCog(commands.Cog):
                         if member.id not in self.voice_state_log:
                             self.voice_state_log[member.id] = datetime.now()
                             recovered_count += 1
-                            print(f"復旧: {member.display_name} さんの計測を再開しました")
+                            logger.info(f"復旧: {member.display_name} さんの計測を再開しました")
         
         if recovered_count > 0:
-            print(f"合計 {recovered_count} 名の作業セッションを復旧しました。")
+            logger.info(f"合計 {recovered_count} 名の作業セッションを復旧しました。")
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
@@ -195,8 +190,37 @@ class StudyCog(commands.Cog):
             
             del self.voice_state_log[member.id]
         
-        # --- 👇 ここから追加: 称号バッジ付与ロジック ---
+        # 称号バッジ付与チェック
+        await self.check_and_award_milestones(member, total_seconds_session, text_channel)
+
+
+
+        current_str = format_duration(total_seconds_session, for_voice=False) # 変数名を合わせました
+        today_sec = await self.bot.db.get_today_seconds(member.id)
+        total_str = format_duration(today_sec, for_voice=False)
         
+        msg_type = "leave" if after.channel is None else "break"
+
+        if text_channel:
+            # 安全にEmbedを生成
+            msg_config = MESSAGES.get(msg_type, {})
+            embed = create_embed_from_config(
+                msg_config,
+                name=member.display_name,
+                time=current_str,
+                total=total_str
+            )
+            embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
+            
+            leave_msg = await text_channel.send(embed=embed)
+            # DB更新: join_msg_idは削除(None)、leave_msg_idを設定
+            await self.bot.db.set_message_state(member.id, None, leave_msg.id)
+
+    async def check_and_award_milestones(self, member, total_seconds_session, text_channel):
+        """累計時間に基づいて称号ロールを付与する"""
+        if total_seconds_session <= 0:
+            return
+
         # 最新の累計時間を取得
         current_total_sec = await self.bot.db.get_total_seconds(member.id)
         current_hours = current_total_sec // 3600
@@ -224,32 +248,9 @@ class StudyCog(commands.Cog):
                                 )
                                 await text_channel.send(embed=embed)
                         except discord.Forbidden:
-                            print(f"権限エラー: ロール {role_name} を付与できませんでした。Botのロール順位を確認してください。")
+                            logger.error(f"権限エラー: ロール {role_name} を付与できませんでした。Botのロール順位を確認してください。")
                     else:
-                        print(f"設定エラー: ロール「{role_name}」がサーバーに見つかりません。")
-        
-        # --- 👆 ここまで追加 ---
-
-        current_str = format_duration(total_seconds_session, for_voice=False) # 変数名を合わせました
-        today_sec = await self.bot.db.get_today_seconds(member.id)
-        total_str = format_duration(today_sec, for_voice=False)
-        
-        msg_type = "leave" if after.channel is None else "break"
-
-        if text_channel:
-            # 安全にEmbedを生成
-            msg_config = MESSAGES.get(msg_type, {})
-            embed = create_embed_from_config(
-                msg_config,
-                name=member.display_name,
-                time=current_str,
-                total=total_str
-            )
-            embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
-            
-            leave_msg = await text_channel.send(embed=embed)
-            # DB更新: join_msg_idは削除(None)、leave_msg_idを設定
-            await self.bot.db.set_message_state(member.id, None, leave_msg.id)
+                        logger.error(f"設定エラー: ロール「{role_name}」がサーバーに見つかりません。")
 
 async def setup(bot):
     await bot.add_cog(StudyCog(bot))
