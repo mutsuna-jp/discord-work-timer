@@ -92,6 +92,7 @@ async def voice_worker(initial_voice_channel):
                     continue
 
             filename = f"voice_{member_id}_{int(asyncio.get_event_loop().time() * 1000)}.mp3"
+            source = None
             try:
                 await generate_voice(text, filename)
                 
@@ -112,6 +113,8 @@ async def voice_worker(initial_voice_channel):
             except Exception as e:
                 logger.error(f"音声再生プロセスエラー: {e}")
             finally:
+                if source:
+                    source.cleanup()
                 if os.path.exists(filename):
                     try:
                         os.remove(filename)

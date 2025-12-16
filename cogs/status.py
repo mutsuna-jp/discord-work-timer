@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands, tasks
-from datetime import datetime
+from datetime import datetime, timedelta
 from config import Config
 from messages import Colors
 import logging
@@ -12,10 +12,17 @@ class StatusCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.update_lock = asyncio.Lock()
+        
+        # Debounce制御用
+        self._update_event = asyncio.Event()
+        self._update_manager_task = self.bot.loop.create_task(self._status_update_manager())
+        
         self.update_status_loop.start()
 
     def cog_unload(self):
         self.update_status_loop.cancel()
+        if self._update_manager_task:
+            self._update_manager_task.cancel()
 
     @tasks.loop(minutes=5)
     async def update_status_loop(self):
@@ -25,7 +32,33 @@ class StatusCog(commands.Cog):
     async def before_update_status_loop(self):
         await self.bot.wait_until_ready()
 
+    async def _status_update_manager(self):
+        """更新リクエストを管理し、一定間隔で実行するループ"""
+        await self.bot.wait_until_ready()
+        while not self.bot.is_closed():
+            try:
+                # リクエストが来るまで待機
+                await self._update_event.wait()
+                self._update_event.clear()
+                
+                # 実際の更新処理を実行
+                await self._update_status_board_impl()
+                
+                # レートリミットウェイト (デバウンス/スロットリング)
+                # ここで待機している間に次のリクエストが来ると、待機明けに即再実行される
+                await asyncio.sleep(5)
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"ステータス更新マネージャーエラー: {e}")
+                await asyncio.sleep(5) # エラー時も少し待つ
+
     async def update_status_board(self):
+        """ステータスボードの更新をリクエストする（即時実行ではなくスケジュール）"""
+        self._update_event.set()
+
+    async def _update_status_board_impl(self):
         """ステータスボードを更新する"""
         # ロックを取得して、同時実行を防ぐ
         async with self.update_lock:
@@ -60,14 +93,10 @@ class StatusCog(commands.Cog):
                 
             active_users = study_cog.voice_state_log
             
-            # 1. ゾンビユーザー（すでにいないユーザー）のチェックとクリーンアップ
-            # 辞書をコピーして反復処理
-            for user_id in list(active_users.keys()):
-                member = channel.guild.get_member(user_id)
-                # ユーザーが見つからない、またはボイスチャンネルにいない場合
-                if not member or not member.voice or not member.voice.channel:
-                    del active_users[user_id]
-                    logger.info(f"ステータスボード更新: 不正な状態のユーザーID {user_id} を削除しました。")
+            # 1. ゾンビユーザーのチェック (データ消失防止のため削除処理は行わない)
+            # ステータスボードは表示のみを担当し、セッション管理はStudyCogのイベントハンドラに任せる
+            # 必要であれば StudyCog 側で整合性チェックを行うべき
+
 
             # Botの過去のメッセージを検索 (Limitを増やして対応)
             my_messages = []
@@ -105,8 +134,12 @@ class StatusCog(commands.Cog):
             all_embeds.append(header_embed)
             
             # 2. ユーザーごとのEmbed作成
-            # 入室順（開始時間が早い順）にソート
-            sorted_users = sorted(active_users.items(), key=lambda item: item[1])
+            # 入室順（実質の開始時間が早い順）にソート
+            # オフセットを引くことで、再起動前の開始時刻に相当する時間を算出
+            sorted_users = sorted(
+                active_users.items(), 
+                key=lambda item: item[1] - timedelta(seconds=study_cog.voice_state_offset.get(item[0], 0))
+            )
 
             for user_id, start_time in sorted_users:
                 member = channel.guild.get_member(user_id)

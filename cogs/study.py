@@ -64,7 +64,7 @@ class CheerView(discord.ui.View):
 class StudyCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.bot = bot
+
         self.voice_state_log = {}
         self.voice_state_offset = {} # Bot再起動前や日次集計前の時間を保持するオフセット
 
