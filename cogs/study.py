@@ -104,6 +104,105 @@ class StudyCog(commands.Cog):
         if recovered_count > 0:
             logger.info(f"合計 {recovered_count} 名の作業セッションを復旧しました。")
 
+        # ▼ 追加: 停止中に退出したユーザーのパネル整理
+        try:
+            log_channel_id = Config.LOG_CHANNEL_ID
+            channel = self.bot.get_channel(log_channel_id)
+            if log_channel_id and not channel:
+                try:
+                    channel = await self.bot.fetch_channel(log_channel_id)
+                except:
+                    pass
+
+            if channel:
+                active_states = await self.bot.db.get_all_active_users_with_state()
+                # 現在復旧されたユーザー(=今もVCにいる人)以外の、パネルが出っぱなしのユーザー
+                missing_users = [row for row in active_states if row[0] not in self.voice_state_log]
+
+                if missing_users:
+                    logger.info(f"停止中に退出したと思われる {len(missing_users)} 名のパネルを処理します。")
+
+                for user_id, join_msg_id in missing_users:
+                    # 1. 古いパネルを削除
+                    try:
+                        await delete_previous_message(channel, join_msg_id)
+                    except:
+                        pass # メッセージが既にない場合は無視
+                    
+                    # 2. メンバーオブジェクトを探す
+                    member = None
+                    for guild in self.bot.guilds:
+                        member = guild.get_member(user_id)
+                        if member: break
+                    
+                    if member:
+                        # 3. 退出ログ(Embed)を送信
+                        # 時間は停止前に記録済みなので、ここでは「メンテナンス」などを表示
+                        today_sec = await self.bot.db.get_today_seconds(member.id)
+                        total_str = format_duration(today_sec, for_voice=False)
+                        
+                        msg_config = MESSAGES.get("leave", {})
+                        # create_embed_from_config は utils からインポート済みと仮定
+                        embed = create_embed_from_config(
+                            msg_config,
+                            name=member.display_name,
+                            time="-- (保存済)",
+                            total=total_str
+                        )
+                        embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
+                        
+                        leave_msg = await channel.send(embed=embed)
+                        
+                        # DB更新: join削除, leave設定
+                        await self.bot.db.set_message_state(member.id, None, leave_msg.id)
+                        logger.info(f"クリーンアップ: {member.display_name} さんのパネルを退出済みへ更新しました。")
+                    else:
+                        # メンバーが見つからない場合はDBの状態だけクリア（パネルは削除済み）
+                        await self.bot.db.set_message_state(user_id, None, None)
+
+        except Exception as e:
+            logger.error(f"停止中退出ユーザーのクリーンアップ中にエラー: {e}")
+
+    async def save_all_sessions(self):
+        """Bot停止時に現在作業中の全ユーザーのログを保存する"""
+        if not self.voice_state_log:
+            return
+
+        logger.info("Bot停止に伴い、作業中のセッションを保存します...")
+        count = 0
+        now = datetime.now()
+
+        # 辞書のコピーでループ（変更中のエラーを防ぐため）
+        for user_id, join_time in list(self.voice_state_log.items()):
+            try:
+                # ユーザー情報を取得（キャッシュから）
+                user = self.bot.get_user(user_id)
+                if not user:
+                    # キャッシュにない場合はIDのみで記録するか、スキップ
+                    # DBにはusernameが必要だが、キャッシュ落ちしてる可能性は低い
+                    # 万が一の場合は "Unknown User" とする
+                    username = "Unknown User"
+                else:
+                    username = user.display_name
+
+                duration = now - join_time
+                total_seconds = int(duration.total_seconds())
+
+                if total_seconds > 0:
+                    await self.bot.db.add_study_log(
+                        user_id,
+                        username,
+                        join_time,
+                        total_seconds,
+                        now
+                    )
+                    count += 1
+            except Exception as e:
+                logger.error(f"セッション保存エラー (User ID: {user_id}): {e}")
+
+        logger.info(f"合計 {count} 件の作業ログを退避保存しました。")
+        self.voice_state_log.clear()
+
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
         """ボイスチャネルの状態変更を監視"""

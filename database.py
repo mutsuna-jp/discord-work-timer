@@ -105,6 +105,13 @@ class Database:
             (user_id, join_msg_id, leave_msg_id)
         )
 
+    async def get_all_active_users_with_state(self) -> List[Tuple[int, int]]:
+        """パネルが出っぱなし（入室中扱い）になっているユーザーとMSG_IDを取得"""
+        return await self.execute(
+            "SELECT user_id, join_msg_id FROM study_message_states WHERE join_msg_id IS NOT NULL",
+            fetch_all=True
+        )
+
     async def add_study_log(self, user_id: int, username: str, join_time: datetime, duration_seconds: int, leave_time: datetime) -> None:
         """学習ログを追加"""
         await self.execute(

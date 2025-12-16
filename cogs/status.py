@@ -95,10 +95,10 @@ class StatusCog(commands.Cog):
             all_embeds = []
             
             # 1. ヘッダー用Embed
+            now_str = datetime.now().strftime("%H:%M")
             header_embed = discord.Embed(
-                title="📊 現在の作業状況", 
-                description=f"現在の作業人数: **{len(active_users)}** 名",
-                timestamp=datetime.now(),
+                title=f"現在の作業状況 (最終更新 {now_str})", 
+                description=f"人数: **{len(active_users)}** 名",
                 color=0x00FF00
             )
             all_embeds.append(header_embed)

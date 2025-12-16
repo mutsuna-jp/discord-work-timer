@@ -110,6 +110,14 @@ class WorkTimerBot(commands.Bot):
         except Exception as e:
             print(f"終了通知送信エラー: {e}")
         
+        # ▼ 追加: セッションの保存 ▼
+        study_cog = self.get_cog("StudyCog")
+        if study_cog:
+            try:
+                await study_cog.save_all_sessions()
+            except Exception as e:
+                print(f"セッション保存エラー: {e}")
+        
         # 本来の終了処理を実行
         await super().close()
 
