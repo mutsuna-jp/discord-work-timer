@@ -50,7 +50,7 @@ class CheerView(discord.ui.View):
                 break
 
         if not found:
-            embed.add_field(name=field_name, value=field_value, inline=False)"},{ 
+            embed.add_field(name=field_name, value=field_value, inline=False)
 
         # メッセージを更新
         await interaction.response.edit_message(embed=embed)
