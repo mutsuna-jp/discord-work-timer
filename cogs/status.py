@@ -1,11 +1,13 @@
+import asyncio
+import logging
+from datetime import datetime, timedelta
+
 import discord
 from discord.ext import commands, tasks
-from datetime import datetime, timedelta
+
 from config import Config
-from messages import Colors
-import logging
-import asyncio
-import random
+from messages import Colors, MESSAGES
+from utils import create_embed_from_config, format_duration
 
 logger = logging.getLogger(__name__)
 
@@ -13,15 +15,21 @@ class StatusCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.update_lock = asyncio.Lock()
+        self._ranking_message_id = None
+        rank_cfg = MESSAGES.get("rank", {})
+        self._ranking_embed_title = rank_cfg.get("embed_title", "🏆 今週の作業時間ランキング")
         
         # Debounce制御用
         self._update_event = asyncio.Event()
-        self._update_manager_task = self.bot.loop.create_task(self._status_update_manager())
+        # create_task を使う（Bot.loop に依存しない）
+        self._update_manager_task = asyncio.create_task(self._status_update_manager())
         
         self.update_status_loop.start()
+        self.ranking_task.start()
 
     def cog_unload(self):
         self.update_status_loop.cancel()
+        self.ranking_task.cancel()
         if self._update_manager_task:
             self._update_manager_task.cancel()
 
@@ -31,6 +39,14 @@ class StatusCog(commands.Cog):
 
     @update_status_loop.before_loop
     async def before_update_status_loop(self):
+        await self.bot.wait_until_ready()
+
+    @tasks.loop(minutes=10)
+    async def ranking_task(self):
+        await self.update_weekly_ranking()
+
+    @ranking_task.before_loop
+    async def before_ranking_task(self):
         await self.bot.wait_until_ready()
 
     async def _status_update_manager(self):
@@ -52,7 +68,7 @@ class StatusCog(commands.Cog):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"ステータス更新マネージャーエラー: {e}")
+                logger.exception("ステータス更新マネージャーエラー")
                 await asyncio.sleep(5) # エラー時も少し待つ
 
     async def update_status_board(self):
@@ -63,29 +79,10 @@ class StatusCog(commands.Cog):
         """ステータスボードを更新する"""
         # ロックを取得して、同時実行を防ぐ
         async with self.update_lock:
-            channel_id = Config.STATUS_CHANNEL_ID
-            if not channel_id:
-                return
-
-            channel = self.bot.get_channel(channel_id)
+            channel = await self._acquire_status_channel("ステータスボード更新")
             if not channel:
-                # キャッシュにない場合は取得を試みる
-                try:
-                    channel = await self.bot.fetch_channel(channel_id)
-                except Exception:
-                    logger.warning(f"ステータスボード更新: チャンネルが見つかりません: {channel_id}")
-                    return
-
-            # 権限チェック
-            permissions = channel.permissions_for(channel.guild.me)
-            if not permissions.view_channel:
-                logger.warning(f"ステータスボード更新: チャンネル {channel.id} を閲覧する権限がありません。")
                 return
-            if not permissions.send_messages:
-                logger.warning(f"ステータスボード更新: チャンネル {channel.id} にメッセージを送信する権限がありません。")
-                return
-            if not permissions.read_message_history:
-                logger.warning(f"ステータスボード更新: チャンネル {channel.id} のメッセージ履歴を読む権限がありません（重複防止のために必要です）。")
+            if not self._check_channel_permissions(channel, "ステータスボード更新"):
                 return
 
             study_cog = self.bot.get_cog("StudyCog")
@@ -106,21 +103,31 @@ class StatusCog(commands.Cog):
                 async for message in channel.history(limit=50):
                     if message.author == self.bot.user:
                         my_messages.append(message)
-            except Exception as e:
-                logger.error(f"メッセージ履歴の取得に失敗: {e}")
+            except Exception:
+                logger.exception("メッセージ履歴の取得に失敗")
                 return
 
             # 新しい順 -> 古い順 に並べ替え（上から順に表示するため）
             my_messages.reverse()
+            my_messages = self._filter_status_messages(my_messages)
 
             if not active_users:
                 # 作業中のユーザーがいない場合 -> 全てのBotメッセージを削除
                 for msg in my_messages:
                     try:
                         await msg.delete()
-                    except Exception as e:
+                        await asyncio.sleep(0.12)  # rate-limit 緩和
+                    except discord.NotFound:
+                        # 既に削除済み
+                        continue
+                    except discord.Forbidden:
+                        logger.error(f"メッセージ削除権限なし: チャンネルID {channel.id}")
+                        return
+                    except discord.HTTPException as e:
                         logger.error(f"メッセージ削除失敗: {e}")
-                return 
+                    except Exception:
+                        logger.exception("メッセージ削除中に予期せぬエラーが発生しました")
+                return
 
             # --- Embed作成処理 (複数メッセージページネーション対応) ---
             all_embeds = []
@@ -145,9 +152,16 @@ class StatusCog(commands.Cog):
             for user_id, start_time in sorted_users:
                 member = channel.guild.get_member(user_id)
                 if not member:
-                     try:
+                    try:
                         member = await channel.guild.fetch_member(user_id)
-                     except:
+                    except discord.NotFound:
+                        # メンバーが存在しない（サーバーを抜けた等）
+                        continue
+                    except discord.HTTPException as e:
+                        logger.error(f"メンバ取得エラー: {e}")
+                        continue
+                    except Exception:
+                        logger.exception("予期せぬエラー: メンバ取得中")
                         continue
 
                 # タスクを取得
@@ -202,25 +216,142 @@ class StatusCog(commands.Cog):
                         try:
                             await my_messages[i].edit(embeds=chunk)
                         except discord.Forbidden:
-                            logger.error(f"ステータスボード更新削除エラー: 権限不足 (Channel ID: {channel.id})")
-                        except Exception as e:
-                            logger.error(f"ステータスボード更新失敗: {e}")
+                            logger.error(f"ステータスボード更新エラー: 権限不足 (Channel ID: {channel.id})")
+                        except Exception:
+                            logger.exception("ステータスボード更新失敗")
                     else:
                         # 新規メッセージを送信
                         try:
                             await channel.send(embeds=chunk)
                         except discord.Forbidden:
                             logger.error(f"ステータスボード送信エラー: 権限不足 (Channel ID: {channel.id})")
-                        except Exception as e:
-                            logger.error(f"ステータスボード送信失敗: {e}")
+                        except Exception:
+                            logger.exception("ステータスボード送信失敗")
                 
                 # B. 不要なメッセージの削除
                 else:
                     msg_to_delete = my_messages[i]
                     try:
                         await msg_to_delete.delete()
-                    except Exception as e:
-                        logger.error(f"余剰メッセージ削除失敗: {e}")
+                    except discord.NotFound:
+                        continue
+                    except discord.Forbidden:
+                        logger.error(f"余剰メッセージ削除権限なし: チャンネルID {channel.id}")
+                    except Exception:
+                        logger.exception("余剰メッセージ削除失敗")
+
+                # ループ間で短い待機を挟み、レートリミットを緩和
+                try:
+                    await asyncio.sleep(0.12)
+                except Exception:
+                    # Sleep が失敗するようなケースは稀、ログだけ残す
+                    logger.exception("スリープ中にエラー")
+            if not self._check_channel_permissions(channel, "ランキング更新"):
+                return
+            await self._upsert_ranking_message(channel, rank_embed)
+
+    async def _build_ranking_embed(self) -> discord.Embed:
+        rank_config = MESSAGES.get("rank", {})
+        embed = create_embed_from_config(rank_config)
+        now = datetime.now()
+        monday = now - timedelta(days=now.weekday())
+        monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+        rows = await self.bot.db.get_weekly_ranking(monday.isoformat())
+        if not rows:
+            embed.description = rank_config.get("empty_message", "今週はまだ誰も作業していません...！")
+            return embed
+
+        row_fmt = rank_config.get("row", "{icon} **{name}**: {time}\n")
+        rank_lines = []
+        for idx, (username, total_seconds) in enumerate(rows, 1):
+            time_str = format_duration(total_seconds, for_voice=True)
+            icon = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"{idx}."
+            rank_lines.append(row_fmt.format(icon=icon, name=username, time=time_str))
+
+        embed.add_field(name="Top Members", value="".join(rank_lines), inline=False)
+        return embed
+
+    async def _upsert_ranking_message(self, channel: discord.TextChannel, embed: discord.Embed):
+        rank_msg = None
+        if self._ranking_message_id:
+            try:
+                rank_msg = await channel.fetch_message(self._ranking_message_id)
+            except discord.NotFound:
+                self._ranking_message_id = None
+            except Exception:
+                logger.exception("ランキングメッセージ取得エラー")
+                rank_msg = None
+
+        if not rank_msg:
+            async for candidate in channel.history(limit=50):
+                if candidate.author == self.bot.user and self._is_ranking_message(candidate):
+                    rank_msg = candidate
+                    self._ranking_message_id = candidate.id
+                    break
+
+        if rank_msg:
+            try:
+                await rank_msg.edit(embed=embed)
+                return
+            except Exception:
+                logger.exception("ランキングメッセージ更新失敗")
+
+        try:
+            new_msg = await channel.send(embed=embed)
+            self._ranking_message_id = new_msg.id
+        except Exception:
+            logger.exception("ランキングメッセージ送信エラー")
+
+    async def _acquire_status_channel(self, context: str):
+        channel_id = Config.STATUS_CHANNEL_ID
+        if not channel_id:
+            logger.warning(f"{context}: STATUS_CHANNEL_ID が設定されていません。")
+            return None
+
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            try:
+                channel = await self.bot.fetch_channel(channel_id)
+            except Exception as e:
+                logger.warning(f"{context}: チャンネル取得失敗 (ID: {channel_id}): {e}")
+                return None
+
+        return channel
+
+    def _check_channel_permissions(self, channel, context: str) -> bool:
+        guild = channel.guild
+        if not guild or not guild.me:
+            logger.warning(f"{context}: ギルドメンバー情報が取得できません。(Channel ID: {channel.id})")
+            return False
+
+        permissions = channel.permissions_for(guild.me)
+        if not permissions.view_channel:
+            logger.warning(f"{context}: チャンネル {channel.id} を閲覧する権限がありません。")
+            return False
+        if not permissions.send_messages:
+            logger.warning(f"{context}: チャネル {channel.id} にメッセージ送信権限がありません。")
+            return False
+        if not permissions.read_message_history:
+            logger.warning(f"{context}: チャンネル {channel.id} の履歴を読む権限がありません。")
+            return False
+
+        return True
+
+    def _is_ranking_message(self, message: discord.Message) -> bool:
+        if not message.embeds:
+            return False
+
+        first_title = message.embeds[0].title
+        return first_title == self._ranking_embed_title
+
+    def _filter_status_messages(self, messages):
+        filtered = []
+        for msg in messages:
+            if self._is_ranking_message(msg):
+                self._ranking_message_id = msg.id
+                continue
+            filtered.append(msg)
+        return filtered
 
 async def setup(bot):
     await bot.add_cog(StatusCog(bot))

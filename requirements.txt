@@ -3,3 +3,7 @@ PyNaCl
 edge-tts
 aiosqlite
 python-dotenv
+
+# Testing
+pytest
+pytest-asyncio
