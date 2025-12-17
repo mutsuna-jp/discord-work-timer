@@ -69,6 +69,8 @@ class Database:
                          (user_id INTEGER PRIMARY KEY, task_content TEXT)''')
             await db.execute('''CREATE TABLE IF NOT EXISTS user_readings
                          (user_id INTEGER PRIMARY KEY, reading TEXT)''')
+            await db.execute('''CREATE TABLE IF NOT EXISTS tips
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT, tip_text TEXT UNIQUE, created_at TEXT)''')
             
             await db.execute('''CREATE INDEX IF NOT EXISTS idx_study_logs_user_created 
                          ON study_logs(user_id, created_at)''')
@@ -333,5 +335,42 @@ class Database:
                 current_check -= timedelta(days=1)
             else:
                 break
+        
+        return streak
+
+    async def add_tip(self, tip_text: str) -> bool:
+        """tipsを追加（重複チェック付き）"""
+        try:
+            await self.execute(
+                "INSERT INTO tips (tip_text, created_at) VALUES (?, ?)",
+                (tip_text, datetime.now().isoformat())
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Tip追加エラー: {e}")
+            return False
+
+    async def get_random_tip(self) -> Optional[str]:
+        """ランダムなtipを取得"""
+        result = await self.execute(
+            "SELECT tip_text FROM tips ORDER BY RANDOM() LIMIT 1",
+            fetch_one=True
+        )
+        return result[0] if result else None
+
+    async def get_all_tips(self) -> List[Tuple[int, str]]:
+        """全てのtipsを取得 (id, tip_text)"""
+        return await self.execute(
+            "SELECT id, tip_text FROM tips ORDER BY id DESC",
+            fetch_all=True
+        )
+
+    async def delete_tip(self, tip_id: int) -> bool:
+        """tipを削除"""
+        result = await self.execute(
+            "DELETE FROM tips WHERE id = ?",
+            (tip_id,)
+        )
+        return result is not None and result > 0
                 
         return streak

@@ -5,6 +5,7 @@ from config import Config
 from messages import Colors
 import logging
 import asyncio
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,12 @@ class StatusCog(commands.Cog):
                 description=f"人数: **{len(active_users)}** 名",
                 color=Colors.GREEN
             )
+            
+            # ランダムなtipを取得して表示
+            tip = await self.bot.db.get_random_tip()
+            if tip:
+                header_embed.add_field(name="💡 Tip", value=tip, inline=False)
+            
             all_embeds.append(header_embed)
             
             # 2. ユーザーごとのEmbed作成

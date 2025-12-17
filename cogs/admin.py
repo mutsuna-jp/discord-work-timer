@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
 from utils import safe_message_delete, format_duration, create_embed_from_config
-from messages import MESSAGES
+from messages import MESSAGES, Colors
 from config import Config
 
 class AdminCog(commands.Cog):
@@ -88,6 +88,85 @@ class AdminCog(commands.Cog):
             await interaction.followup.send(f"ログチャンネル <#{log_channel_id}> のメッセージを全て削除しました。({len(deleted)}件)", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"削除中にエラーが発生しました: {e}", ephemeral=True)
+
+    @app_commands.command(name="add_tip", description="[管理者用] Tipを追加します")
+    @app_commands.describe(tip="追加するTip（最大500文字）")
+    @app_commands.default_permissions(administrator=True)
+    async def add_tip(self, interaction: discord.Interaction, tip: str):
+        """Tipを追加"""
+        if len(tip) > 500:
+            await interaction.response.send_message(
+                "❌ Tipは500文字以内で設定してください。",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        success = await self.bot.db.add_tip(tip)
+        
+        if success:
+            await interaction.followup.send(
+                f"✅ Tipを追加しました：\n\n{tip}",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                "❌ このTipは既に登録されているか、エラーが発生しました。",
+                ephemeral=True
+            )
+
+    @app_commands.command(name="list_tips", description="[管理者用] 登録されているTipsを表示します")
+    @app_commands.default_permissions(administrator=True)
+    async def list_tips(self, interaction: discord.Interaction):
+        """登録済みのTipsを表示"""
+        await interaction.response.defer(ephemeral=True)
+
+        tips = await self.bot.db.get_all_tips()
+        
+        if not tips:
+            await interaction.followup.send(
+                "📭 まだTipが登録されていません。",
+                ephemeral=True
+            )
+            return
+
+        # Embedにまとめる（Discord制限対策で複数ページに分割）
+        embed = discord.Embed(
+            title="📚 登録済みのTips",
+            description=f"全 {len(tips)} 件",
+            color=Colors.BLUE
+        )
+
+        for tip_id, tip_text in tips[:25]:  # 最初の25個を表示
+            embed.add_field(
+                name=f"ID: {tip_id}",
+                value=tip_text[:1024],  # Embed field値の上限
+                inline=False
+            )
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="delete_tip", description="[管理者用] Tipを削除します")
+    @app_commands.describe(tip_id="削除するTipのID")
+    @app_commands.default_permissions(administrator=True)
+    async def delete_tip(self, interaction: discord.Interaction, tip_id: int):
+        """Tipを削除"""
+        await interaction.response.defer(ephemeral=True)
+
+        success = await self.bot.db.delete_tip(tip_id)
+        
+        if success:
+            await interaction.followup.send(
+                f"✅ ID {tip_id} のTipを削除しました。",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                f"❌ ID {tip_id} のTipが見つかりません。",
+                ephemeral=True
+            )
+
 
 async def setup(bot):
     await bot.add_cog(AdminCog(bot))
