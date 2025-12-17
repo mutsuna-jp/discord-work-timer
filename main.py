@@ -7,6 +7,8 @@ import logging
 from config import Config
 from database import Database
 from messages import Colors
+import utils
+import traceback
 
 logger = logging.getLogger("main")
 
@@ -47,6 +49,10 @@ class WorkTimerBot(commands.Bot):
                 logger.info(f'Loaded extension: {extension}')
             except Exception as e:
                 logger.error(f'Failed to load extension {extension}: {e}')
+                try:
+                    await utils.notify_backup(self, f"Failed to load extension {extension}", content=str(e))
+                except Exception:
+                    pass
         
         # コマンドツリーの同期
         guild_id = Config.GUILD_ID
@@ -66,6 +72,10 @@ class WorkTimerBot(commands.Bot):
                 logger.info(f'Synced {len(synced)} command(s) globally.')
         except Exception as e:
             logger.error(f'Failed to sync commands: {e}')
+            try:
+                await utils.notify_backup(self, "Failed to sync commands", content=str(e))
+            except Exception:
+                pass
 
     async def on_ready(self):
         logger.info(f'ログインしました: {self.user}')
@@ -105,12 +115,35 @@ class WorkTimerBot(commands.Bot):
                     color=Colors.RED
                 )
                 await channel.send(embed=embed)
+
+    async def on_error(self, event_method, *args, **kwargs):
+        """discord.py のイベントで未処理例外が発生したときに呼ばれる。"""
+        tb = traceback.format_exc()
+        logger.error(f"Unhandled exception in {event_method}: {tb}")
+        try:
+            await utils.notify_backup(self, f"Unhandled error in {event_method}", content=tb)
+        except Exception as e:
+            logger.error(f"バックアップ送信中にエラーが発生しました: {e}")
+
+    async def on_command_error(self, ctx, error):
+        """コマンド実行時の例外を通知する。"""
+        tb = ''.join(traceback.format_exception(type(error), error, error.__traceback__))
+        logger.error(f"Command error in {getattr(ctx, 'command', None)}: {tb}")
+        try:
+            info = f"Command: {getattr(ctx, 'command', None)} | Author: {getattr(ctx, 'author', None)} | Channel: {getattr(ctx, 'channel', None)}"
+            await utils.notify_backup(self, "Command error", content=info + "\n" + tb)
+        except Exception as e:
+            logger.error(f"バックアップ送信中にエラーが発生しました: {e}")
                 logger.info("終了通知を送信しました。")
             else:
                 logger.warning(f"通知先のチャンネルが見つかりません (ID: {channel_id})")
                 
         except Exception as e:
             logger.error(f"終了通知送信エラー: {e}")
+            try:
+                await utils.notify_backup(self, "Shutdown notification failed", content=str(e))
+            except Exception:
+                pass
         
         # ▼ 追加: セッションの保存 ▼
         study_cog = self.get_cog("StudyCog")
@@ -119,6 +152,10 @@ class WorkTimerBot(commands.Bot):
                 await study_cog.save_all_sessions()
             except Exception as e:
                 logger.error(f"セッション保存エラー: {e}")
+                try:
+                    await utils.notify_backup(self, "Session save failed during shutdown", content=str(e))
+                except Exception:
+                    pass
         
         # 本来の終了処理を実行
         await super().close()
@@ -151,5 +188,12 @@ if __name__ == '__main__':
             logger.info("🛑 SystemExitを受信しました。終了します。")
         except Exception as e:
             logger.critical(f"🛑 実行中にエラーが発生しました: {e}")
+            # 可能ならバックアップチャンネルへ通知（ブロッキングで安全に送信）
+            try:
+                import asyncio, traceback
+                tb = traceback.format_exc()
+                asyncio.run(utils.notify_backup(bot, "Critical runtime error", content=tb))
+            except Exception as ex:
+                logger.error(f"バックアップ送信に失敗: {ex}")
         finally:
             logger.info("🏁 プロセスが完全に終了しました。")

@@ -3,6 +3,8 @@ import asyncio
 import discord
 import edge_tts
 import logging
+import traceback
+from config import Config
 from messages import Colors
 
 logger = logging.getLogger(__name__)
@@ -197,3 +199,54 @@ def create_embed_from_config(config, **kwargs):
                 embed.add_field(name=name, value=value, inline=inline)
     
     return embed
+
+
+async def notify_backup(bot, title: str, content: str = None, exc: Exception = None, max_tb_chars: int = 1500):
+    """バックアップチャンネルにエラーメッセージを送信する（失敗しても例外を投げない）。
+
+    - `bot` は discord bot インスタンス
+    - `title` は要約タイトル
+    - `content` は文字列本文
+    - `exc` に Exception を渡すとトレースバックを送信します
+    """
+    channel_id = Config.BACKUP_CHANNEL_ID
+    if not channel_id:
+        logger.warning("BACKUP_CHANNEL_ID が設定されていません。エラー通知をスキップします。")
+        return
+
+    try:
+        channel = bot.get_channel(channel_id)
+        if not channel:
+            try:
+                channel = await bot.fetch_channel(channel_id)
+            except Exception as e:
+                logger.error(f"バックアップチャンネル取得失敗 (ID: {channel_id}): {e}")
+                return
+
+        # トレースバックを整形
+        tb_text = None
+        if exc:
+            tb_text = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        elif content and isinstance(content, str) and '\n' in content and len(content) > max_tb_chars:
+            # content が長い場合に末尾を切り出す（ログの多くは末尾が重要）
+            pass
+
+        # Discord のメッセージ長制限に合わせて切り詰め
+        message = f"**{title}**\n"
+        if content:
+            message += content
+
+        if tb_text:
+            if len(tb_text) > max_tb_chars:
+                tb_text = "...(truncated)\n" + tb_text[-max_tb_chars:]
+            message += f"\n```py\n{tb_text}\n```"
+
+        # 送信（長すぎる場合は分割）
+        if len(message) <= 1900:
+            await channel.send(message)
+        else:
+            # 大きい場合は先頭のみ送る
+            await channel.send(message[:1900] + "\n...(truncated)")
+
+    except Exception as e:
+        logger.error(f"バックアップ送信エラー: {e}")
