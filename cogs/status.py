@@ -285,30 +285,9 @@ class StatusCog(commands.Cog):
         rank_config = MESSAGES.get("rank", {})
         embed = create_embed_from_config(rank_config)
         now = datetime.now()
-        # --- サーバー合計 (本日: DBの合計 + 現在作業中のユーザーの経過時間) ---
-        try:
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-            rows_today = await self.bot.db.get_study_logs_in_range(today_start)
-            logged_total = sum(row[2] for row in rows_today) if rows_today else 0
-
-            active_total = 0
-            study_cog = self.bot.get_cog("StudyCog")
-            if study_cog:
-                for user_id, start_time in study_cog.voice_state_log.items():
-                    try:
-                        offset = study_cog.voice_state_offset.get(user_id, 0)
-                        duration = int((now - start_time).total_seconds()) + offset
-                        if duration > 0:
-                            active_total += duration
-                    except Exception:
-                        # 取得に失敗したユーザーはスキップ
-                        continue
-
-            server_total_seconds = int(logged_total) + int(active_total)
-            server_total_str = format_duration(server_total_seconds, for_voice=True)
-            embed.add_field(name="本日のサーバー合計作業時間（Server Total）", value=f"**{server_total_str}**", inline=False)
-        except Exception:
-            logger.exception("サーバー合計の計算に失敗しました")
+        # サーバー合計はランキングカードに含めない（サーバー合計は別カードで表示されるため）
+        # もし将来ランキングにサーバー合計を表示する必要が出てきた場合、ここで計算を再追加してください。
+        pass
 
         monday = now - timedelta(days=now.weekday())
         monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -327,15 +306,23 @@ class StatusCog(commands.Cog):
                     if duration <= 0:
                         continue
 
-                    # Try to get a human-readable name for the user
+                    # Try to get a human-readable name for the user.
+                    # Prefer the guild Member (so we can use display_name) by searching bot.guilds;
+                    # fall back to cached User if necessary. This avoids using raw numeric IDs when
+                    # the member can be resolved, preventing duplicate entries like 'オカモト' and '1449...'.
                     member = None
                     try:
-                        # Prefer cached user info
-                        member = self.bot.get_user(user_id)
+                        for guild in getattr(self.bot, "guilds", []):
+                            m = guild.get_member(user_id)
+                            if m:
+                                member = m
+                                break
+                        if not member:
+                            # Cached user may still provide a sensible name
+                            member = self.bot.get_user(user_id)
                     except Exception:
                         member = None
 
-                    name = None
                     if member:
                         name = getattr(member, "display_name", None) or getattr(member, "name", None) or str(user_id)
                     else:
@@ -390,7 +377,8 @@ class StatusCog(commands.Cog):
 
             server_total_seconds = int(logged_total) + int(active_total)
             server_total_str = format_duration(server_total_seconds, for_voice=True)
-            embed.add_field(name="本日のサーバー合計作業時間", value=f"**{server_total_str}**", inline=False)
+            # タイトルに既に "本日のサーバー合計作業時間" があるため、本文は合計時間のみを表示する
+            embed.description = f"**{server_total_str}**"
         except Exception:
             logger.exception("サーバー合計の計算に失敗しました")
 
