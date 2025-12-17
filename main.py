@@ -115,6 +115,16 @@ class WorkTimerBot(commands.Bot):
                     color=Colors.RED
                 )
                 await channel.send(embed=embed)
+                logger.info("終了通知を送信しました。")
+            else:
+                logger.warning(f"通知先のチャンネルが見つかりません (ID: {channel_id})")
+                
+        except Exception as e:
+            logger.error(f"終了通知送信エラー: {e}")
+            try:
+                await utils.notify_backup(self, "Shutdown notification failed", content=str(e))
+            except Exception:
+                pass
 
     async def on_error(self, event_method, *args, **kwargs):
         """discord.py のイベントで未処理例外が発生したときに呼ばれる。"""
@@ -134,16 +144,6 @@ class WorkTimerBot(commands.Bot):
             await utils.notify_backup(self, "Command error", content=info + "\n" + tb)
         except Exception as e:
             logger.error(f"バックアップ送信中にエラーが発生しました: {e}")
-                logger.info("終了通知を送信しました。")
-            else:
-                logger.warning(f"通知先のチャンネルが見つかりません (ID: {channel_id})")
-                
-        except Exception as e:
-            logger.error(f"終了通知送信エラー: {e}")
-            try:
-                await utils.notify_backup(self, "Shutdown notification failed", content=str(e))
-            except Exception:
-                pass
         
         # ▼ 追加: セッションの保存 ▼
         study_cog = self.get_cog("StudyCog")
