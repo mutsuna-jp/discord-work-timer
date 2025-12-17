@@ -132,12 +132,6 @@ class StatusCog(commands.Cog):
                 description=f"人数: **{len(active_users)}** 名",
                 color=Colors.GREEN
             )
-            
-            # ランダムなtipを取得して表示
-            tip = await self.bot.db.get_random_tip()
-            if tip:
-                header_embed.add_field(name="💡 Tip", value=tip, inline=False)
-            
             all_embeds.append(header_embed)
             
             # 2. ユーザーごとのEmbed作成
@@ -181,11 +175,22 @@ class StatusCog(commands.Cog):
                 user_embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
                 all_embeds.append(user_embed)
 
-            # 3. チャンク分け (1メッセージにつきEmbed10個まで)
+            # 3. ランダムなtipを取得して最後に表示
+            tip = await self.bot.db.get_random_tip()
+            if tip:
+                tip_embed = discord.Embed(
+                    title="Tips",
+                    description=tip,
+                    color=Colors.GOLD
+                )
+                tip_embed.set_footer(text="毎回異なるTipが表示されます")
+                all_embeds.append(tip_embed)
+
+            # 4. チャンク分け (1メッセージにつきEmbed10個まで)
             chunk_size = 10
             embed_chunks = [all_embeds[i:i + chunk_size] for i in range(0, len(all_embeds), chunk_size)]
 
-            # 4. 既存メッセージとの同期 (更新、新規送信、削除)
+            # 5. 既存メッセージとの同期 (更新、新規送信、削除)
             max_len = max(len(embed_chunks), len(my_messages))
 
             for i in range(max_len):
