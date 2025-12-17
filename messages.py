@@ -81,10 +81,7 @@ MESSAGES = {
     "break": {
         "embed_title": "☕ 休憩中...",
         "embed_color": Colors.YELLOW, # 黄色
-        "fields": [
-            {"name": "今回の記録", "value": "**{time}**"},
-            {"name": "本日の総記録", "value": "**{total}**"}
-        ]
+        "fields": []
     },
 
     # ---------------------------

@@ -36,24 +36,21 @@ class CheerView(discord.ui.View):
         embed = interaction.message.embeds[0]
         
         # 応援者のメンションリストを生成
-        supporter_mentions = []
-        for user_id in self.supporters:
-             supporter_mentions.append(f"<@{user_id}>")
-            
+        supporter_mentions = [f"<@{user_id}>" for user_id in self.supporters]
         text = " ".join(supporter_mentions)
         field_name = f"📣 応援 ({len(self.supporters)})"
         field_value = text
 
-        # 既存の「応援」フィールドがあれば更新、なければ追加
+        # 既存の「応援」フィールドを探して更新、なければ追加
         found = False
         for i, field in enumerate(embed.fields):
-            if field.name == field_name:
+            if field.name.startswith("📣 応援"):
                 embed.set_field_at(i, name=field_name, value=field_value, inline=False)
                 found = True
                 break
-        
+
         if not found:
-            embed.add_field(name=field_name, value=field_value, inline=False)
+            embed.add_field(name=field_name, value=field_value, inline=False)"},{ 
 
         # メッセージを更新
         await interaction.response.edit_message(embed=embed)
@@ -111,6 +108,8 @@ class StudyCog(commands.Cog):
         for guild in self.bot.guilds:
             for vc in guild.voice_channels:
                 for member in vc.members:
+                        if member.bot:
+                            continue
                         if member.id not in self.voice_state_log:
                             # デフォルトは現在時刻
                             start_time = datetime.now()
@@ -211,7 +210,7 @@ class StudyCog(commands.Cog):
                     # 万が一の場合は "Unknown User" とする
                     username = "Unknown User"
                 else:
-                    username = user.display_name
+                    username = getattr(user, "display_name", None) or getattr(user, "name", "Unknown User")
 
                 # 実際に記録すべき時間（オフセットは含まない）
                 duration = now - join_time
@@ -335,6 +334,18 @@ class StudyCog(commands.Cog):
 
     async def handle_break_start(self, member, after, text_channel):
         """ユーザーが休憩を開始した場合の処理（作業中→セルフデフ）"""
+        # 現在までの作業時間を計算して蓄積
+        if member.id in self.voice_state_log:
+            work_start = self.voice_state_log[member.id]
+            work_duration = datetime.now() - work_start
+            work_seconds = int(work_duration.total_seconds())
+            
+            # 次のセッション用にオフセットとして保持
+            self.voice_state_offset[member.id] = self.voice_state_offset.get(member.id, 0) + work_seconds
+            
+            # voice_state_log の開始時刻をリセット（休憩終了後の新規セッション開始用）
+            del self.voice_state_log[member.id]
+        
         # 休憩開始時刻を記録
         self.break_state_log[member.id] = datetime.now()
         
@@ -342,21 +353,20 @@ class StudyCog(commands.Cog):
         if member.id not in self.break_duration_accumulated:
             self.break_duration_accumulated[member.id] = 0
         
-        today_sec = await self.bot.db.get_today_seconds(member.id)
-        time_str = format_duration(today_sec, for_voice=False)
-        
         if text_channel:
             # 「休憩開始」メッセージを表示
             msg_config = MESSAGES.get("break", {})
             embed = create_embed_from_config(
                 msg_config,
-                name=member.display_name,
-                total=time_str
+                name=member.display_name
             )
             embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
             
             leave_msg = await text_channel.send(embed=embed)
-            await self.bot.db.set_message_state(member.id, None, leave_msg.id)
+            # join_msg_id は保持したまま、leave_msg_id だけ更新
+            state = await self.bot.db.get_message_state(member.id)
+            prev_join_msg_id = state[0] if state else None
+            await self.bot.db.set_message_state(member.id, prev_join_msg_id, leave_msg.id)
         
         # ステータスボード更新
         status_cog = self.bot.get_cog("StatusCog")
@@ -377,56 +387,16 @@ class StudyCog(commands.Cog):
         # 作業再開時刻を設定（休憩時間を除外するため、現在の時刻を新しい開始時刻とする）
         self.voice_state_log[member.id] = datetime.now()
         
-        # 前回のメッセージを削除
+        # 前回のメッセージ（休憩カード）を削除するだけ
         state = await self.bot.db.get_message_state(member.id)
+        prev_join_msg_id = state[0] if state else None
         prev_leave_msg_id = state[1] if state else None
         
         if text_channel:
             await delete_previous_message(text_channel, prev_leave_msg_id)
         
-        today_sec = await self.bot.db.get_today_seconds(member.id)
-        time_str_text = format_duration(today_sec, for_voice=False)
-        time_str_speak = format_duration(today_sec, for_voice=True)
-        
-        # Task and Streak support
-        user_task = await self.bot.db.get_user_task(member.id)
-        task_name = user_task if user_task else "作業"
-        streak_days = await self.bot.db.get_user_streak(member.id)
-        
-        # Reading support
-        user_reading = await self.bot.db.get_user_reading(member.id)
-        speak_name = user_reading if user_reading else member.display_name
-        
-        if text_channel:
-            # 「復帰」メッセージを表示
-            msg_config = MESSAGES.get("resume", {})
-            embed = create_embed_from_config(
-                msg_config,
-                name=member.display_name,
-                current_total=time_str_text,
-                task=task_name,
-                days=streak_days
-            )
-            embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
-            
-            view = CheerView(member)
-            join_msg = await text_channel.send(embed=embed, view=view)
-            await self.bot.db.set_message_state(member.id, join_msg.id, None)
-        
-        # 音声メッセージを送信
-        msg_fmt = MESSAGES.get("resume", {}).get("message", "{name}さんが作業を再開しました。")
-        try:
-            speak_text = msg_fmt.format(
-                name=speak_name,
-                task=task_name,
-                days=streak_days,
-                current_total=time_str_speak
-            )
-        except Exception as e:
-            logger.error(f"音声メッセージフォーマットエラー: {e}")
-            speak_text = f"{speak_name}さんが作業を再開しました。"
-        
-        self.bot.loop.create_task(speak_in_vc(after.channel, speak_text, member.id))
+        # メッセージ状態をクリア（join_msg_id は保持、leave_msg_id だけクリア）
+        await self.bot.db.set_message_state(member.id, prev_join_msg_id, None)
         
         # ステータスボード更新
         status_cog = self.bot.get_cog("StatusCog")
@@ -435,20 +405,31 @@ class StudyCog(commands.Cog):
 
     async def handle_voice_leave(self, member, after, text_channel):
         """ユーザーがVCを離れた場合の処理"""
-        # 休憩中だった場合は蓄積時間をリセット
-        if member.id in self.break_state_log:
+        # 休憩中だった場合：オフセット計算も行う
+        was_on_break = member.id in self.break_state_log
+        if was_on_break:
+            break_start = self.break_state_log[member.id]
+            break_duration = datetime.now() - break_start
+            break_seconds = int(break_duration.total_seconds())
+            
+            self.break_duration_accumulated[member.id] = self.break_duration_accumulated.get(member.id, 0) + break_seconds
             del self.break_state_log[member.id]
         
         # DBから以前のメッセージ状態を取得
         state = await self.bot.db.get_message_state(member.id)
         prev_join_msg_id = state[0] if state else None
+        prev_leave_msg_id = state[1] if state else None
 
         if text_channel:
+            # 休憩中に退出した場合は開発カード（join）も削除
+            # 通常退出の場合は開発カードも削除（常に両方削除）
             await delete_previous_message(text_channel, prev_join_msg_id)
+            await delete_previous_message(text_channel, prev_leave_msg_id)
 
         total_seconds_session = 0 # 今回のセッションで保存すべき時間（DB保存用・休憩時間除外）
         total_seconds_display = 0 # 表示用（オフセット込み・休憩時間除外）
 
+        # 休憩前の作業時間があればそれを使用、なければ 0
         if member.id in self.voice_state_log:
             join_time = self.voice_state_log[member.id]
             leave_time = datetime.now()
@@ -470,17 +451,31 @@ class StudyCog(commands.Cog):
             del self.voice_state_log[member.id]
             if member.id in self.voice_state_offset:
                 del self.voice_state_offset[member.id]
+        elif member.id in self.voice_state_offset:
+            # voice_state_log がない場合（休憩開始時に削除されている）、
+            # オフセット（休憩前の作業時間）のみをセッション時間として使用
+            total_seconds_session = self.voice_state_offset[member.id]
+            total_seconds_display = total_seconds_session
+            
+            # DB記録用に現在時刻を使用（休憩直後の退出など）
+            await self.bot.db.add_study_log(
+                member.id,
+                member.display_name,
+                datetime.now(),
+                total_seconds_session,
+                datetime.now()
+            )
+            
+            del self.voice_state_offset[member.id]
         
         # 蓄積された休憩時間をリセット
         if member.id in self.break_duration_accumulated:
             del self.break_duration_accumulated[member.id]
         
-        # 称号バッジ付与チェック (表示用の合計時間ではなく、今回増えた分を渡すのが適切だが、
-        # check_and_award_milestones 内の実装を見ると「現在の累計 - session」と比較しているので
-        # 今回DBに追加された total_seconds_session を渡すのが正しい)
+        # 称号バッジ付与チェック
         await self.check_and_award_milestones(member, total_seconds_session, text_channel)
 
-        current_str = format_duration(total_seconds_display, for_voice=False) # 表示用時間を使用
+        current_str = format_duration(total_seconds_display, for_voice=False)
         today_sec = await self.bot.db.get_today_seconds(member.id)
         total_str = format_duration(today_sec, for_voice=False)
         
@@ -521,7 +516,7 @@ class StudyCog(commands.Cog):
 
         # 時間の境界をまたいだかチェック
         if prev_hours < current_hours:
-            for hours, role_name in Config.MILESTONES.items():
+            for hours, role_name in sorted(Config.MILESTONES.items()):
                 # 今回の作業で境界を超えた場合
                 if prev_hours < hours <= current_hours:
                     # ロールを取得して付与
