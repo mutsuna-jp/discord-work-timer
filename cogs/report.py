@@ -74,11 +74,12 @@ class ReportCog(commands.Cog):
     @app_commands.command(name="stats", description="あなたの累計作業時間を表示します")
     @app_commands.default_permissions(send_messages=True)
     async def stats(self, interaction: discord.Interaction):
-        """個別統計を表示（グラフ付き）"""
+        """個別統計を表示（グラフ付き・マルチEmbed）"""
         await interaction.response.defer(ephemeral=True)
 
         user_id = interaction.user.id
         
+        # --- データ取得 ---
         total_seconds = await self.bot.db.get_total_seconds(user_id)
         first_date_str = await self.bot.db.get_first_log_date(user_id)
 
@@ -92,52 +93,62 @@ class ReportCog(commands.Cog):
             date_disp = "---"
             days_since = 0
 
+        # --- 1つ目のEmbed（メイン情報 + 7日間グラフ） ---
         stats_config = MESSAGES.get("stats", {})
-        embed = create_embed_from_config(
+        embed1 = create_embed_from_config(
             stats_config,
             name=interaction.user.display_name,
             total_time=time_str,
             date=date_disp,
             days=days_since
         )
-        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed1.set_thumbnail(url=interaction.user.display_avatar.url)
         
-        # グラフ生成を試みる
-        graph_files = []
+        # 送信するEmbedリストとファイルリスト
+        embeds_to_send = [embed1]
+        files_to_send = []
+
+        # --- グラフ生成とEmbedへの紐付け ---
         try:
-            # 過去7日間のデータを取得
+            # A. 7日間グラフ (Embed1のメイン画像に設定)
             daily_stats = await self.bot.db.get_last_7_days_summary(user_id)
             if daily_stats and any(v > 0 for v in daily_stats.values()):
                 try:
-                    # 7日間推移グラフを生成
                     graph_path_7day = generate_7day_graph(daily_stats, interaction.user.display_name)
                     if os.path.exists(graph_path_7day):
-                        graph_files.append(discord.File(graph_path_7day, filename="7day_graph.png"))
-                        embed.set_image(url="attachment://7day_graph.png")
+                        file_7day = discord.File(graph_path_7day, filename="7day_graph.png")
+                        files_to_send.append(file_7day)
+                        # Embed1 に画像をセット
+                        embed1.set_image(url="attachment://7day_graph.png")
                 except Exception as e:
                     logger.error(f"7日間グラフ生成エラー ({user_id}): {e}")
             
-            # 時間帯別統計グラフを生成
+            # B. 時間帯別グラフ (Embed2を作成して設定)
             hourly_stats = await self.bot.db.get_hourly_stats(user_id)
             if hourly_stats and any(v > 0 for v in hourly_stats.values()):
                 try:
                     graph_path_hourly = generate_hourly_graph(hourly_stats, interaction.user.display_name)
                     if os.path.exists(graph_path_hourly):
-                        graph_files.append(discord.File(graph_path_hourly, filename="hourly_graph.png"))
+                        file_hourly = discord.File(graph_path_hourly, filename="hourly_graph.png")
+                        files_to_send.append(file_hourly)
+                        
+                        # 2つ目のEmbedを作成（画像表示用）
+                        embed2 = discord.Embed(color=embed1.color) # 色を合わせる
+                        embed2.set_image(url="attachment://hourly_graph.png")
+                        embeds_to_send.append(embed2)
+                        
                 except Exception as e:
                     logger.error(f"時間帯グラフ生成エラー ({user_id}): {e}")
         except Exception as e:
             logger.error(f"グラフ生成処理エラー ({user_id}): {e}")
         
-        # Embed送信（ファイル付き）
+        # --- 送信 ---
         try:
-            if graph_files:
-                await interaction.followup.send(embed=embed, files=graph_files, ephemeral=True)
-            else:
-                await interaction.followup.send(embed=embed, ephemeral=True)
+            # embeds引数にリストを渡すことで、複数のカードをまとめて送信できます
+            await interaction.followup.send(embeds=embeds_to_send, files=files_to_send, ephemeral=True)
         finally:
             # 生成したグラフファイルをクリーンアップ
-            for file in graph_files:
+            for file in files_to_send:
                 try:
                     if os.path.exists(file.fp.name):
                         os.remove(file.fp.name)
