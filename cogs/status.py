@@ -49,6 +49,21 @@ class StatusCog(commands.Cog):
     async def before_ranking_task(self):
         await self.bot.wait_until_ready()
 
+    async def update_weekly_ranking(self):
+        """週次ランキングを投稿または更新する。VCの有無に関わらず実行される。"""
+        channel = await self._acquire_status_channel("ランキング更新")
+        if not channel:
+            return
+
+        if not self._check_channel_permissions(channel, "ランキング更新"):
+            return
+
+        try:
+            rank_embed = await self._build_ranking_embed()
+            await self._upsert_ranking_message(channel, rank_embed)
+        except Exception:
+            logger.exception("週間ランキング更新エラー")
+
     async def _status_update_manager(self):
         """更新リクエストを管理し、一定間隔で実行するループ"""
         await self.bot.wait_until_ready()
@@ -257,6 +272,31 @@ class StatusCog(commands.Cog):
         rank_config = MESSAGES.get("rank", {})
         embed = create_embed_from_config(rank_config)
         now = datetime.now()
+        # --- サーバー合計 (本日: DBの合計 + 現在作業中のユーザーの経過時間) ---
+        try:
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            rows_today = await self.bot.db.get_study_logs_in_range(today_start)
+            logged_total = sum(row[2] for row in rows_today) if rows_today else 0
+
+            active_total = 0
+            study_cog = self.bot.get_cog("StudyCog")
+            if study_cog:
+                for user_id, start_time in study_cog.voice_state_log.items():
+                    try:
+                        offset = study_cog.voice_state_offset.get(user_id, 0)
+                        duration = int((now - start_time).total_seconds()) + offset
+                        if duration > 0:
+                            active_total += duration
+                    except Exception:
+                        # 取得に失敗したユーザーはスキップ
+                        continue
+
+            server_total_seconds = int(logged_total) + int(active_total)
+            server_total_str = format_duration(server_total_seconds, for_voice=True)
+            embed.add_field(name="本日のサーバー合計作業時間（Server Total）", value=f"**{server_total_str}**", inline=False)
+        except Exception:
+            logger.exception("サーバー合計の計算に失敗しました")
+
         monday = now - timedelta(days=now.weekday())
         monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
         rows = await self.bot.db.get_weekly_ranking(monday.isoformat())
