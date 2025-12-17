@@ -265,11 +265,8 @@ def generate_7day_graph(daily_stats: dict, username: str) -> str:
     """
     import matplotlib.pyplot as plt
     import matplotlib.dates as mdates
+    import japanize_matplotlib  # 日本語フォント対応
     from datetime import datetime
-    
-    # 日本語フォント設定（Windows環境対応）
-    plt.rcParams['font.sans-serif'] = ['MS Gothic', 'Yu Gothic', 'Meiryo']
-    plt.rcParams['axes.unicode_minus'] = False  # マイナス記号対応
     
     # データを抽出（日付順）
     dates = sorted(daily_stats.keys())
@@ -319,10 +316,7 @@ def generate_hourly_graph(hourly_stats: dict, username: str) -> str:
         画像ファイルパス
     """
     import matplotlib.pyplot as plt
-    
-    # 日本語フォント設定（Windows環境対応）
-    plt.rcParams['font.sans-serif'] = ['MS Gothic', 'Yu Gothic', 'Meiryo']
-    plt.rcParams['axes.unicode_minus'] = False  # マイナス記号対応
+    import japanize_matplotlib  # 日本語フォント対応
     
     # データを抽出
     hours = [int(h) for h in sorted(hourly_stats.keys())]

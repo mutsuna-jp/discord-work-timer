@@ -4,6 +4,7 @@ edge-tts
 aiosqlite
 python-dotenv
 matplotlib
+japanize-matplotlib
 
 # Testing
 pytest
