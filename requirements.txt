@@ -3,6 +3,7 @@ PyNaCl
 edge-tts
 aiosqlite
 python-dotenv
+matplotlib
 
 # Testing
 pytest

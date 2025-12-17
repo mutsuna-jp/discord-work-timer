@@ -411,3 +411,37 @@ class Database:
                 result[date_str] = total if total else 0
         
         return result
+
+    async def get_hourly_stats(self, user_id: int) -> dict:
+        """過去7日間の時間帯別作業時間を取得
+        
+        Returns:
+            dict: {hour: total_seconds, ...} 形式（0-23時）
+        """
+        today = datetime.now().date()
+        start_date = today - timedelta(days=6)  # 過去7日間
+        
+        # 時間帯別に集計
+        query = '''
+            SELECT strftime('%H', start_time) as hour, SUM(duration_seconds) as total
+            FROM study_logs
+            WHERE user_id = ? AND DATE(start_time) >= DATE(?)
+            GROUP BY strftime('%H', start_time)
+            ORDER BY hour ASC
+        '''
+        
+        rows = await self.execute(
+            query,
+            (user_id, start_date.isoformat()),
+            fetch_all=True
+        )
+        
+        # 0-23時まで全ての時間帯を初期化
+        result = {str(i).zfill(2): 0 for i in range(24)}
+        
+        # データベースの結果を反映
+        if rows:
+            for hour_str, total in rows:
+                result[hour_str] = total if total else 0
+        
+        return result

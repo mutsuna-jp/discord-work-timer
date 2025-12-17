@@ -6,7 +6,7 @@ import os
 import asyncio
 import logging
 from config import Config
-from utils import format_duration, delete_previous_message, safe_message_delete, create_embed_from_config
+from utils import format_duration, delete_previous_message, safe_message_delete, create_embed_from_config, generate_7day_graph, generate_hourly_graph
 from messages import MESSAGES, Colors
 
 logger = logging.getLogger(__name__)
@@ -74,7 +74,7 @@ class ReportCog(commands.Cog):
     @app_commands.command(name="stats", description="あなたの累計作業時間を表示します")
     @app_commands.default_permissions(send_messages=True)
     async def stats(self, interaction: discord.Interaction):
-        """個別統計を表示"""
+        """個別統計を表示（グラフ付き）"""
         await interaction.response.defer(ephemeral=True)
 
         user_id = interaction.user.id
@@ -102,7 +102,47 @@ class ReportCog(commands.Cog):
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        # グラフ生成を試みる
+        graph_files = []
+        try:
+            # 過去7日間のデータを取得
+            daily_stats = await self.bot.db.get_last_7_days_summary(user_id)
+            if daily_stats and any(v > 0 for v in daily_stats.values()):
+                try:
+                    # 7日間推移グラフを生成
+                    graph_path_7day = generate_7day_graph(daily_stats, interaction.user.display_name)
+                    if os.path.exists(graph_path_7day):
+                        graph_files.append(discord.File(graph_path_7day, filename="7day_graph.png"))
+                        embed.set_image(url="attachment://7day_graph.png")
+                except Exception as e:
+                    logger.error(f"7日間グラフ生成エラー ({user_id}): {e}")
+            
+            # 時間帯別統計グラフを生成
+            hourly_stats = await self.bot.db.get_hourly_stats(user_id)
+            if hourly_stats and any(v > 0 for v in hourly_stats.values()):
+                try:
+                    graph_path_hourly = generate_hourly_graph(hourly_stats, interaction.user.display_name)
+                    if os.path.exists(graph_path_hourly):
+                        graph_files.append(discord.File(graph_path_hourly, filename="hourly_graph.png"))
+                except Exception as e:
+                    logger.error(f"時間帯グラフ生成エラー ({user_id}): {e}")
+        except Exception as e:
+            logger.error(f"グラフ生成処理エラー ({user_id}): {e}")
+        
+        # Embed送信（ファイル付き）
+        try:
+            if graph_files:
+                await interaction.followup.send(embed=embed, files=graph_files, ephemeral=True)
+            else:
+                await interaction.followup.send(embed=embed, ephemeral=True)
+        finally:
+            # 生成したグラフファイルをクリーンアップ
+            for file in graph_files:
+                try:
+                    if os.path.exists(file.fp.name):
+                        os.remove(file.fp.name)
+                except:
+                    pass
 
     @app_commands.command(name="daily_report", description="[管理者用] 日報を手動送信します")
     @app_commands.describe(days_offset="何日前のデータとして実行するか (例: 1 = 昨日)")

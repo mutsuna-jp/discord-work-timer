@@ -40,8 +40,7 @@ class WorkTimerBot(commands.Bot):
             'cogs.timer_cog',
             'cogs.admin',
             'cogs.status',
-            'cogs.pomodoro',
-            'cogs.contribution'
+            'cogs.pomodoro'
         ]
         
         for extension in initial_extensions:

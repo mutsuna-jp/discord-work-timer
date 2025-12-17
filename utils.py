@@ -250,3 +250,107 @@ async def notify_backup(bot, title: str, content: str = None, exc: Exception = N
 
     except Exception as e:
         logger.error(f"バックアップ送信エラー: {e}")
+
+
+def generate_7day_graph(daily_stats: dict, username: str) -> str:
+    """
+    過去7日間の作業時間推移グラフを生成
+    
+    Args:
+        daily_stats: {date_str: total_seconds, ...} の辞書
+        username: ユーザー名
+    
+    Returns:
+        画像ファイルパス
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    from datetime import datetime
+    
+    # 日本語フォント設定
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+    
+    # データを抽出（日付順）
+    dates = sorted(daily_stats.keys())
+    hours = [daily_stats[d] / 3600 for d in dates]
+    
+    # 日付をdatetime オブジェクトに変換
+    date_objs = [datetime.fromisoformat(d) for d in dates]
+    
+    # グラフ作成
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.bar(date_objs, hours, color='#5865F2', width=0.6)
+    
+    # X軸: 日付フォーマット
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
+    ax.xaxis.set_major_locator(mdates.DayLocator())
+    fig.autofmt_xdate(rotation=45)
+    
+    # Y軸: 時間（h）
+    ax.set_ylabel('Work Hours (h)', fontsize=11)
+    
+    # グリッド
+    ax.grid(axis='y', alpha=0.3)
+    
+    # タイトル
+    ax.set_title(f'{username} - Last 7 Days Study', fontsize=13, fontweight='bold')
+    
+    # レイアウト調整
+    fig.tight_layout()
+    
+    # ファイル保存
+    output_path = 'temp_7day_graph.png'
+    fig.savefig(output_path, dpi=80, bbox_inches='tight')
+    plt.close(fig)
+    
+    return output_path
+
+
+def generate_hourly_graph(hourly_stats: dict, username: str) -> str:
+    """
+    時間帯別の集中度グラフを生成
+    
+    Args:
+        hourly_stats: {hour: total_seconds, ...} の辞書（00-23）
+        username: ユーザー名
+    
+    Returns:
+        画像ファイルパス
+    """
+    import matplotlib.pyplot as plt
+    
+    # 日本語フォント設定
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+    
+    # データを抽出
+    hours = [int(h) for h in sorted(hourly_stats.keys())]
+    values = [hourly_stats[str(h).zfill(2)] / 3600 for h in hours]
+    
+    # グラフ作成
+    fig, ax = plt.subplots(figsize=(12, 5))
+    colors = ['#5865F2' if v > 0 else '#4a4f5a' for v in values]
+    ax.bar([f'{h:02d}' for h in hours], values, color=colors, width=0.7)
+    
+    # Y軸: 時間（h）
+    ax.set_ylabel('Work Hours (h)', fontsize=11)
+    ax.set_xlabel('Hour of Day', fontsize=11)
+    
+    # グリッド
+    ax.grid(axis='y', alpha=0.3)
+    
+    # タイトル
+    ax.set_title(f'{username} - Hourly Concentration (Last 7 Days)', fontsize=13, fontweight='bold')
+    
+    # X軸刻み
+    ax.set_xticks(range(0, 24, 2))
+    
+    # レイアウト調整
+    fig.tight_layout()
+    
+    # ファイル保存
+    output_path = 'temp_hourly_graph.png'
+    fig.savefig(output_path, dpi=80, bbox_inches='tight')
+    plt.close(fig)
+    
+    return output_path
+
