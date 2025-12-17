@@ -16,6 +16,7 @@ class StatusCog(commands.Cog):
         self.bot = bot
         self.update_lock = asyncio.Lock()
         self._ranking_message_id = None
+        self._daily_message_id = None
         rank_cfg = MESSAGES.get("rank", {})
         self._ranking_embed_title = rank_cfg.get("embed_title", "🏆 今週の作業時間ランキング")
         
@@ -41,9 +42,11 @@ class StatusCog(commands.Cog):
     async def before_update_status_loop(self):
         await self.bot.wait_until_ready()
 
-    @tasks.loop(minutes=10)
+    @tasks.loop(minutes=5)
     async def ranking_task(self):
+        # Update both weekly ranking and today's server total every 5 minutes
         await self.update_weekly_ranking()
+        await self.update_daily_server_total()
 
     @ranking_task.before_loop
     async def before_ranking_task(self):
@@ -264,9 +267,19 @@ class StatusCog(commands.Cog):
             if not self._check_channel_permissions(channel, "ランキング更新"):
                 return
 
-            # ランキング用のEmbedを生成してアップサートする
-            rank_embed = await self._build_ranking_embed()
-            await self._upsert_ranking_message(channel, rank_embed)
+            # 1) 今日のサーバー合計を別カードでアップサート
+            try:
+                server_embed = await self._build_server_total_embed()
+                await self._upsert_server_total_message(channel, server_embed)
+            except Exception:
+                logger.exception("本日のサーバー合計カードの更新に失敗しました")
+
+            # 2) ランキングを別カードでアップサート
+            try:
+                rank_embed = await self._build_ranking_embed()
+                await self._upsert_ranking_message(channel, rank_embed)
+            except Exception:
+                logger.exception("ランキングカードの更新に失敗しました")
 
     async def _build_ranking_embed(self) -> discord.Embed:
         rank_config = MESSAGES.get("rank", {})
@@ -300,19 +313,140 @@ class StatusCog(commands.Cog):
         monday = now - timedelta(days=now.weekday())
         monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
         rows = await self.bot.db.get_weekly_ranking(monday.isoformat())
-        if not rows:
+
+        # Convert DB rows into a mutable mapping: {username: total_seconds}
+        totals_by_name = {username: int(total_seconds) for username, total_seconds in rows} if rows else {}
+
+        # Add currently active users' elapsed seconds to the totals (so ranking reflects live sessions)
+        study_cog = self.bot.get_cog("StudyCog")
+        if study_cog:
+            for user_id, start_time in study_cog.voice_state_log.items():
+                try:
+                    offset = study_cog.voice_state_offset.get(user_id, 0)
+                    duration = int((now - start_time).total_seconds()) + offset
+                    if duration <= 0:
+                        continue
+
+                    # Try to get a human-readable name for the user
+                    member = None
+                    try:
+                        # Prefer cached user info
+                        member = self.bot.get_user(user_id)
+                    except Exception:
+                        member = None
+
+                    name = None
+                    if member:
+                        name = getattr(member, "display_name", None) or getattr(member, "name", None) or str(user_id)
+                    else:
+                        # Fallback to a generic identifier (DB rows usually contain usernames)
+                        name = str(user_id)
+
+                    totals_by_name[name] = totals_by_name.get(name, 0) + duration
+                except Exception:
+                    continue
+
+        if not totals_by_name:
             embed.description = rank_config.get("empty_message", "今週はまだ誰も作業していません...！")
             return embed
 
+        # Sort by total seconds descending and prepare formatted rank lines
+        sorted_totals = sorted(totals_by_name.items(), key=lambda kv: kv[1], reverse=True)
         row_fmt = rank_config.get("row", "{icon} **{name}**: {time}\n")
         rank_lines = []
-        for idx, (username, total_seconds) in enumerate(rows, 1):
+        for idx, (username, total_seconds) in enumerate(sorted_totals, 1):
             time_str = format_duration(total_seconds, for_voice=True)
             icon = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"{idx}."
             rank_lines.append(row_fmt.format(icon=icon, name=username, time=time_str))
 
         embed.add_field(name="Top Members", value="".join(rank_lines), inline=False)
         return embed
+
+    async def _build_server_total_embed(self) -> discord.Embed:
+        """本日のサーバー合計作業時間だけを返すEmbedを生成する"""
+        cfg = MESSAGES.get("rank", {})
+        embed = discord.Embed(
+            title=cfg.get("server_total_title", "本日のサーバー合計作業時間"),
+            color=Colors.GOLD
+        )
+
+        try:
+            now = datetime.now()
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            rows_today = await self.bot.db.get_study_logs_in_range(today_start)
+            logged_total = sum(row[2] for row in rows_today) if rows_today else 0
+
+            active_total = 0
+            study_cog = self.bot.get_cog("StudyCog")
+            if study_cog:
+                for user_id, start_time in study_cog.voice_state_log.items():
+                    try:
+                        offset = study_cog.voice_state_offset.get(user_id, 0)
+                        duration = int((now - start_time).total_seconds()) + offset
+                        if duration > 0:
+                            active_total += duration
+                    except Exception:
+                        continue
+
+            server_total_seconds = int(logged_total) + int(active_total)
+            server_total_str = format_duration(server_total_seconds, for_voice=True)
+            embed.add_field(name="本日のサーバー合計作業時間", value=f"**{server_total_str}**", inline=False)
+        except Exception:
+            logger.exception("サーバー合計の計算に失敗しました")
+
+        return embed
+
+    async def _upsert_server_total_message(self, channel: discord.TextChannel, embed: discord.Embed):
+        msg = None
+        if self._daily_message_id:
+            try:
+                msg = await channel.fetch_message(self._daily_message_id)
+            except discord.NotFound:
+                self._daily_message_id = None
+            except Exception:
+                logger.exception("サーバー合計メッセージ取得エラー")
+
+        if not msg:
+            async for candidate in channel.history(limit=50):
+                if candidate.author == self.bot.user and self._is_server_total_message(candidate):
+                    msg = candidate
+                    self._daily_message_id = candidate.id
+                    break
+
+        if msg:
+            try:
+                await msg.edit(embed=embed)
+                return
+            except Exception:
+                logger.exception("サーバー合計メッセージ更新失敗")
+
+        try:
+            new_msg = await channel.send(embed=embed)
+            self._daily_message_id = new_msg.id
+        except Exception:
+            logger.exception("サーバー合計メッセージ送信エラー")
+
+    async def update_daily_server_total(self):
+        """Public method to post or update today's server total embed/message."""
+        channel = await self._acquire_status_channel("サーバー合計更新")
+        if not channel:
+            return
+
+        if not self._check_channel_permissions(channel, "サーバー合計更新"):
+            return
+
+        try:
+            server_embed = await self._build_server_total_embed()
+            await self._upsert_server_total_message(channel, server_embed)
+        except Exception:
+            logger.exception("本日のサーバー合計更新エラー")
+
+    def _is_server_total_message(self, message: discord.Message) -> bool:
+        if not message.embeds:
+            return False
+
+        first_title = message.embeds[0].title
+        return first_title == MESSAGES.get("rank", {}).get("server_total_title", "本日のサーバー合計作業時間")
 
     async def _upsert_ranking_message(self, channel: discord.TextChannel, embed: discord.Embed):
         rank_msg = None
@@ -392,6 +526,9 @@ class StatusCog(commands.Cog):
         for msg in messages:
             if self._is_ranking_message(msg):
                 self._ranking_message_id = msg.id
+                continue
+            if self._is_server_total_message(msg):
+                self._daily_message_id = msg.id
                 continue
             filtered.append(msg)
         return filtered

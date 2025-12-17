@@ -78,7 +78,13 @@ class StudyCog(commands.Cog):
         # ステータスボード更新
         status_cog = self.bot.get_cog("StatusCog")
         if status_cog:
+            # 更新スケジュールのデバウンス制御に任せつつ、退出時にはランキングも即時更新
             await status_cog.update_status_board()
+            try:
+                await status_cog.update_weekly_ranking()
+            except Exception:
+                # ランキング更新は副次的処理なので失敗してもログを残して続行
+                logger.exception("退出時のランキング即時更新に失敗しました")
 
     @app_commands.command(name="reading", description="読み上げ用の名前(読み仮名)を設定します")
     @app_commands.describe(name="読み上げに使用する名前")
@@ -501,6 +507,10 @@ class StudyCog(commands.Cog):
         if status_cog:
             await status_cog.update_status_board()
 
+            try:
+                await status_cog.update_daily_server_total()
+            except Exception:
+                logger.exception("退出時の本日のサーバー合計即時更新に失敗しました")
     async def check_and_award_milestones(self, member, total_seconds_session, text_channel):
         """累計時間に基づいて称号ロールを付与する"""
         if total_seconds_session <= 0:
