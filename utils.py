@@ -254,51 +254,67 @@ async def notify_backup(bot, title: str, content: str = None, exc: Exception = N
 
 def generate_7day_graph(daily_stats: dict, username: str) -> str:
     """
-    過去7日間の作業時間推移グラフを生成
-    
-    Args:
-        daily_stats: {date_str: total_seconds, ...} の辞書
-        username: ユーザー名
-    
-    Returns:
-        画像ファイルパス
+    過去7日間の作業時間推移グラフを生成（Discordダークテーマ風）
     """
     import matplotlib.pyplot as plt
     import matplotlib.dates as mdates
-    import japanize_matplotlib  # 日本語フォント対応
+    import japanize_matplotlib
     from datetime import datetime
     
-    # データを抽出（日付順）
+    # Discordカラーパレット
+    BG_COLOR = '#2f3136'      # 背景色
+    TEXT_COLOR = '#dcddde'    # 文字色
+    BAR_COLOR = '#5865F2'     # バーの色 (Blurple)
+    GRID_COLOR = '#40444b'    # グリッド色
+
+    # データを抽出
     dates = sorted(daily_stats.keys())
     hours = [daily_stats[d] / 3600 for d in dates]
-    
-    # 日付をdatetime オブジェクトに変換
     date_objs = [datetime.fromisoformat(d) for d in dates]
     
-    # グラフ作成
+    # グラフ設定
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.bar(date_objs, hours, color='#5865F2', width=0.6)
+    fig.patch.set_facecolor(BG_COLOR) # 外枠の背景
+    ax.set_facecolor(BG_COLOR)        # グラフ内の背景
+
+    # バーの描画（zorderでグリッドの手前に表示）
+    bars = ax.bar(date_objs, hours, color=BAR_COLOR, width=0.6, zorder=3)
     
-    # X軸: 日付フォーマット
+    # X軸設定
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
     ax.xaxis.set_major_locator(mdates.DayLocator())
-    fig.autofmt_xdate(rotation=45)
+    ax.tick_params(axis='x', colors=TEXT_COLOR, labelsize=10)
     
-    # Y軸: 時間（h）
-    ax.set_ylabel('作業時間（時間）', fontsize=11)
+    # Y軸設定
+    ax.set_ylabel('作業時間 (時間)', fontsize=12, color=TEXT_COLOR)
+    ax.tick_params(axis='y', colors=TEXT_COLOR, labelsize=10)
     
-    # グリッド
-    ax.grid(axis='y', alpha=0.3)
+    # 枠線（スパイン）の整理
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color(GRID_COLOR)
+    ax.spines['bottom'].set_color(GRID_COLOR)
+    
+    # グリッド（点線）
+    ax.grid(axis='y', color=GRID_COLOR, linestyle='--', linewidth=1, alpha=0.7, zorder=0)
     
     # タイトル
-    ax.set_title(f'{username} - 過去7日間の作業時間', fontsize=13, fontweight='bold')
+    ax.set_title(f'{username} - 過去7日間の推移', fontsize=14, fontweight='bold', color=TEXT_COLOR, pad=15)
+    
+    # バーの上に数値を表示
+    for bar in bars:
+        height = bar.get_height()
+        if height > 0:
+            ax.text(bar.get_x() + bar.get_width()/2., height + 0.1,
+                    f'{height:.1f}h',
+                    ha='center', va='bottom', color=TEXT_COLOR, fontsize=10, fontweight='bold')
     
     # レイアウト調整
     fig.tight_layout()
     
-    # ファイル保存
+    # 保存
     output_path = 'temp_7day_graph.png'
-    fig.savefig(output_path, dpi=80, bbox_inches='tight')
+    fig.savefig(output_path, dpi=100, bbox_inches='tight', facecolor=fig.get_facecolor())
     plt.close(fig)
     
     return output_path
@@ -306,46 +322,62 @@ def generate_7day_graph(daily_stats: dict, username: str) -> str:
 
 def generate_hourly_graph(hourly_stats: dict, username: str) -> str:
     """
-    時間帯別の集中度グラフを生成
-    
-    Args:
-        hourly_stats: {hour: total_seconds, ...} の辞書（00-23）
-        username: ユーザー名
-    
-    Returns:
-        画像ファイルパス
+    時間帯別の集中度グラフを生成（Discordダークテーマ風）
     """
     import matplotlib.pyplot as plt
-    import japanize_matplotlib  # 日本語フォント対応
+    import japanize_matplotlib
     
-    # データを抽出
+    # カラーパレット
+    BG_COLOR = '#2f3136'
+    TEXT_COLOR = '#dcddde'
+    BAR_COLOR = '#5865F2'
+    BAR_COLOR_INACTIVE = '#40444b' # 作業していない時間帯の色
+    GRID_COLOR = '#40444b'
+
+    # データ抽出
     hours = [int(h) for h in sorted(hourly_stats.keys())]
     values = [hourly_stats[str(h).zfill(2)] / 3600 for h in hours]
     
-    # グラフ作成
-    fig, ax = plt.subplots(figsize=(12, 5))
-    colors = ['#5865F2' if v > 0 else '#4a4f5a' for v in values]
-    ax.bar([f'{h:02d}' for h in hours], values, color=colors, width=0.7)
+    # グラフ設定
+    fig, ax = plt.subplots(figsize=(10, 5))
+    fig.patch.set_facecolor(BG_COLOR)
+    ax.set_facecolor(BG_COLOR)
     
-    # Y軸: 時間（h）
-    ax.set_ylabel('作業時間（時間）', fontsize=11)
-    ax.set_xlabel('時刻', fontsize=11)
+    # バーの色分け（値がある場所を目立たせる）
+    colors = [BAR_COLOR if v > 0 else BAR_COLOR_INACTIVE for v in values]
+    bars = ax.bar([f'{h:02d}' for h in hours], values, color=colors, width=0.7, zorder=3)
     
-    # グリッド
-    ax.grid(axis='y', alpha=0.3)
+    # 軸ラベル
+    ax.set_ylabel('作業時間 (時間)', fontsize=12, color=TEXT_COLOR)
+    ax.set_xlabel('時刻', fontsize=12, color=TEXT_COLOR)
+    
+    # 目盛り設定
+    ax.tick_params(axis='x', colors=TEXT_COLOR, labelsize=9)
+    ax.tick_params(axis='y', colors=TEXT_COLOR, labelsize=10)
+    ax.set_xticks(range(0, 24, 2)) # 2時間おきに表示ですっきりさせる
+    
+    # 枠線とグリッド
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color(GRID_COLOR)
+    ax.spines['bottom'].set_color(GRID_COLOR)
+    ax.grid(axis='y', color=GRID_COLOR, linestyle='--', linewidth=1, alpha=0.7, zorder=0)
     
     # タイトル
-    ax.set_title(f'{username} - 時間帯別の集中度（過去7日間）', fontsize=13, fontweight='bold')
+    ax.set_title(f'{username} - 時間帯別の集中度', fontsize=14, fontweight='bold', color=TEXT_COLOR, pad=15)
     
-    # X軸刻み
-    ax.set_xticks(range(0, 24, 2))
+    # 数値ラベル（0より大きい場合のみ表示）
+    for bar in bars:
+        height = bar.get_height()
+        if height > 0.1: # 小さすぎる値は被るので表示しない
+            ax.text(bar.get_x() + bar.get_width()/2., height + 0.1,
+                    f'{height:.1f}',
+                    ha='center', va='bottom', color=TEXT_COLOR, fontsize=9)
     
-    # レイアウト調整
     fig.tight_layout()
     
-    # ファイル保存
     output_path = 'temp_hourly_graph.png'
-    fig.savefig(output_path, dpi=80, bbox_inches='tight')
+    fig.savefig(output_path, dpi=100, bbox_inches='tight', facecolor=fig.get_facecolor())
     plt.close(fig)
     
     return output_path
