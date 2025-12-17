@@ -183,7 +183,6 @@ class StatusCog(commands.Cog):
                     description=tip,
                     color=Colors.GOLD
                 )
-                tip_embed.set_footer(text="毎回異なるTipが表示されます")
                 all_embeds.append(tip_embed)
 
             # 4. チャンク分け (1メッセージにつきEmbed10個まで)
