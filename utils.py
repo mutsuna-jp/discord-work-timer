@@ -267,8 +267,9 @@ def generate_7day_graph(daily_stats: dict, username: str) -> str:
     import matplotlib.dates as mdates
     from datetime import datetime
     
-    # 日本語フォント設定
-    plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+    # 日本語フォント設定（Windows環境対応）
+    plt.rcParams['font.sans-serif'] = ['MS Gothic', 'Yu Gothic', 'Meiryo']
+    plt.rcParams['axes.unicode_minus'] = False  # マイナス記号対応
     
     # データを抽出（日付順）
     dates = sorted(daily_stats.keys())
@@ -287,13 +288,13 @@ def generate_7day_graph(daily_stats: dict, username: str) -> str:
     fig.autofmt_xdate(rotation=45)
     
     # Y軸: 時間（h）
-    ax.set_ylabel('Work Hours (h)', fontsize=11)
+    ax.set_ylabel('作業時間（時間）', fontsize=11)
     
     # グリッド
     ax.grid(axis='y', alpha=0.3)
     
     # タイトル
-    ax.set_title(f'{username} - Last 7 Days Study', fontsize=13, fontweight='bold')
+    ax.set_title(f'{username} - 過去7日間の作業時間', fontsize=13, fontweight='bold')
     
     # レイアウト調整
     fig.tight_layout()
@@ -319,8 +320,9 @@ def generate_hourly_graph(hourly_stats: dict, username: str) -> str:
     """
     import matplotlib.pyplot as plt
     
-    # 日本語フォント設定
-    plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+    # 日本語フォント設定（Windows環境対応）
+    plt.rcParams['font.sans-serif'] = ['MS Gothic', 'Yu Gothic', 'Meiryo']
+    plt.rcParams['axes.unicode_minus'] = False  # マイナス記号対応
     
     # データを抽出
     hours = [int(h) for h in sorted(hourly_stats.keys())]
@@ -332,14 +334,14 @@ def generate_hourly_graph(hourly_stats: dict, username: str) -> str:
     ax.bar([f'{h:02d}' for h in hours], values, color=colors, width=0.7)
     
     # Y軸: 時間（h）
-    ax.set_ylabel('Work Hours (h)', fontsize=11)
-    ax.set_xlabel('Hour of Day', fontsize=11)
+    ax.set_ylabel('作業時間（時間）', fontsize=11)
+    ax.set_xlabel('時刻', fontsize=11)
     
     # グリッド
     ax.grid(axis='y', alpha=0.3)
     
     # タイトル
-    ax.set_title(f'{username} - Hourly Concentration (Last 7 Days)', fontsize=13, fontweight='bold')
+    ax.set_title(f'{username} - 時間帯別の集中度（過去7日間）', fontsize=13, fontweight='bold')
     
     # X軸刻み
     ax.set_xticks(range(0, 24, 2))
