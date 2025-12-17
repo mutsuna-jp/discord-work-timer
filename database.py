@@ -372,5 +372,42 @@ class Database:
             (tip_id,)
         )
         return result is not None and result > 0
-                
-        return streak
+
+    async def get_last_7_days_summary(self, user_id: int) -> dict:
+        """過去7日間の日別作業時間を取得
+        
+        Returns:
+            dict: {date_str: total_seconds, ...} 形式
+        """
+        # 過去7日間の日付を取得
+        today = datetime.now().date()
+        start_date = today - timedelta(days=6)  # 過去7日間（今日を含む）
+        
+        # データベースから該当データを取得
+        query = '''
+            SELECT DATE(created_at) as date, SUM(duration_seconds) as total
+            FROM study_logs
+            WHERE user_id = ? AND DATE(created_at) >= DATE(?)
+            GROUP BY DATE(created_at)
+            ORDER BY DATE(created_at) ASC
+        '''
+        
+        rows = await self.execute(
+            query,
+            (user_id, start_date.isoformat()),
+            fetch_all=True
+        )
+        
+        # 辞書に変換（日付が無いデータには0を入れる）
+        result = {}
+        for i in range(7):
+            date = start_date + timedelta(days=i)
+            date_str = date.isoformat()
+            result[date_str] = 0
+        
+        # データベースの結果を反映
+        if rows:
+            for date_str, total in rows:
+                result[date_str] = total if total else 0
+        
+        return result

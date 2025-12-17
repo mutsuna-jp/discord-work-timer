@@ -248,6 +248,9 @@ class StatusCog(commands.Cog):
                     logger.exception("スリープ中にエラー")
             if not self._check_channel_permissions(channel, "ランキング更新"):
                 return
+
+            # ランキング用のEmbedを生成してアップサートする
+            rank_embed = await self._build_ranking_embed()
             await self._upsert_ranking_message(channel, rank_embed)
 
     async def _build_ranking_embed(self) -> discord.Embed:

@@ -67,3 +67,42 @@ async def test_build_ranking_embed_empty():
     rank_config = MESSAGES.get("rank", {})
     expected = rank_config.get("empty_message", "今週はまだ誰も作業していません...！")
     assert embed.description == expected
+
+
+@pytest.mark.asyncio
+async def test_upsert_ranking_message_sends_if_none_exists():
+    # Minimal fake channel that has no existing messages and supports send()
+    class FakeChannel:
+        def __init__(self):
+            self._sent = None
+
+        async def history(self, limit=50):
+            # empty async iterator
+            if False:
+                yield None
+
+        async def send(self, embed=None):
+            # emulate discord.Message with id
+            self._sent = embed
+            return SimpleNamespace(id=999)
+
+    cog = make_cog_without_init()
+
+    class DummyDB:
+        async def get_weekly_ranking(self, monday_iso):
+            return []
+
+        async def get_random_tip(self):
+            return None
+
+    class DummyBot:
+        def __init__(self):
+            self.db = DummyDB()
+
+    cog.bot = DummyBot()
+
+    fake_channel = FakeChannel()
+    # call upsert; should set _ranking_message_id to returned id
+    embed = await StatusCog._build_ranking_embed(cog)
+    await StatusCog._upsert_ranking_message(cog, fake_channel, embed)
+    assert cog._ranking_message_id == 999
